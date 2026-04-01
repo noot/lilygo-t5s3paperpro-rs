@@ -46,6 +46,9 @@ const TPS_REG_ENABLE: u8 = 0x01;
 const TPS_REG_VCOM1: u8 = 0x03;
 const TPS_REG_VCOM2: u8 = 0x04;
 const TPS_REG_PG: u8 = 0x0F;
+const BQ27220_ADDR: u8 = 0x55;
+const BQ27220_REG_VOLTAGE: u8 = 0x08;
+const BQ27220_REG_STATE_OF_CHARGE: u8 = 0x2C;
 const VCOM_MV: u16 = 1600;
 const PCA_BIT_OE: u8 = 1 << 0;
 const PCA_BIT_MODE: u8 = 1 << 1;
@@ -169,8 +172,24 @@ impl<'a> ConfigWriter<'a> {
         Ok(value[0])
     }
 
+    fn read_register_u16(&mut self, device: u8, reg: u8) -> crate::Result<u16> {
+        let mut value = [0u8; 2];
+        self.i2c
+            .write_read(device, &[reg], &mut value)
+            .map_err(crate::Error::I2c)?;
+        Ok(u16::from_le_bytes(value))
+    }
+
     fn write_register(&mut self, device: u8, payload: &[u8]) -> crate::Result<()> {
         self.i2c.write(device, payload).map_err(crate::Error::I2c)
+    }
+
+    fn battery_voltage_mv(&mut self) -> crate::Result<u16> {
+        self.read_register_u16(BQ27220_ADDR, BQ27220_REG_VOLTAGE)
+    }
+
+    fn battery_state_of_charge(&mut self) -> crate::Result<u16> {
+        self.read_register_u16(BQ27220_ADDR, BQ27220_REG_STATE_OF_CHARGE)
     }
 }
 
@@ -280,6 +299,14 @@ impl<'a> ED047TC1<'a> {
         self.cfg_writer.write()?;
         self.cfg_writer.set_stv(false);
         Ok(())
+    }
+
+    pub(crate) fn battery_voltage_mv(&mut self) -> crate::Result<u16> {
+        self.cfg_writer.battery_voltage_mv()
+    }
+
+    pub(crate) fn battery_state_of_charge(&mut self) -> crate::Result<u16> {
+        self.cfg_writer.battery_state_of_charge()
     }
 
     pub(crate) fn frame_start(&mut self) -> crate::Result<()> {

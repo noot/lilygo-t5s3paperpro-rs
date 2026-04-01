@@ -10,7 +10,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_epd47::{pin_config, Battery, Display, DrawMode};
+use lilygo_epd47::display::Rectangle;
+use lilygo_epd47::{pin_config, Display, DrawMode};
 use u8g2_fonts::FontRenderer;
 
 static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mr>();
@@ -37,23 +38,33 @@ fn main() -> ! {
     )
     .expect("to initialize display");
 
-    let mut battery = Battery::new(peripherals.GPIO14, peripherals.ADC2);
-
     let delay = Delay::new();
 
     display.power_on().expect("to power on display");
     delay.delay_millis(10);
+    display.clear().expect("to clear screen");
+
+    let text_origin = Point::new(60, display.bounding_box().center().y);
+    let text_area = Rectangle {
+        x: 40,
+        y: (display.bounding_box().center().y - 56) as u16,
+        width: display.bounding_box().size.width as u16 - 80,
+        height: 112,
+    };
 
     loop {
-        display.clear().expect("to clear screen");
+        let voltage = display.battery_voltage().expect("to read battery voltage");
+        let percent = display
+            .battery_percentage()
+            .expect("to read battery percentage");
+
+        display.clear_area(text_area).expect("to clear text area");
+
         FONT.render_aligned(
-            format_args!("Voltage: {}V", battery.read()),
-            Point::new(
-                display.bounding_box().center().x,
-                display.bounding_box().center().y,
-            ),
+            format_args!("Battery: {:>5.3}V {:>3}%", voltage, percent),
+            text_origin,
             u8g2_fonts::types::VerticalPosition::Baseline,
-            u8g2_fonts::types::HorizontalAlignment::Center,
+            u8g2_fonts::types::HorizontalAlignment::Left,
             u8g2_fonts::types::FontColor::WithBackground {
                 fg: Gray4::BLACK,
                 bg: Gray4::WHITE,

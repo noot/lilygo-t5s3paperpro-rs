@@ -119,6 +119,16 @@ impl<'a> Display<'a> {
         self.epd.power_off()
     }
 
+    /// Read the battery voltage in volts from the on-board BQ27220 fuel gauge.
+    pub fn battery_voltage(&mut self) -> Result<f32> {
+        Ok(self.epd.battery_voltage_mv()? as f32 / 1000.0)
+    }
+
+    /// Read the battery state of charge percentage from the on-board BQ27220 fuel gauge.
+    pub fn battery_percentage(&mut self) -> Result<u16> {
+        self.epd.battery_state_of_charge()
+    }
+
     /// Sets a single pixel in the framebuffer without updating the display.
     ///
     /// If the provided coordinates are outside the screen, this method returns
