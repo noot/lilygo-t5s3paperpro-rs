@@ -1,6 +1,9 @@
-//! Simple driver for the LilyGo T5 4.7 inch E-Ink Display.
-//! The driver is wired for the LilyGo T5 S3 Paper Pro Lite / T5S3 4.7 inch
-//! E-Paper Pro hardware variant (ESP32-S3).
+//! Rust driver fork for the LilyGo T5 S3 Paper Pro device family.
+//!
+//! This crate started from the original `fridolin-koch/lilygo-epd47-rs`
+//! project and is now wired for the LilyGo T5 S3 Paper Pro Lite / T5S3 4.7
+//! inch E-Paper Pro hardware variant (ESP32-S3), based heavily on analysis of
+//! the official `Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO` firmware.
 //!
 //! This library depends on alloc and requires you to set up an global allocator
 //! for the PSRAM.
@@ -11,6 +14,7 @@
 //! `power::wake_status()`, `Display::deep_sleep()`, and `power::shutdown()`
 //! expose the board's reset/wakeup and power-management paths.
 //! `rtc::Clock` exposes the RTC-backed clock functions.
+//! `sdcard::SdCard` exposes the SPI-connected microSD slot.
 //!
 //!
 //! Built using [`esp-hal`] and [`embedded-graphics`]
@@ -37,7 +41,7 @@
 //!     delay::Delay,
 //!     prelude::*,
 //! };
-//! use lilygo_epd47::{pin_config, Display, DrawMode};
+//! use lilygo_t5s3paperpro::{pin_config, Display, DrawMode};
 //!
 //! #[entry]
 //! fn main() -> ! {
@@ -77,7 +81,7 @@
 //! For small black-on-white UI regions, you can use the fast direct-update path:
 //!
 //! ```rust no_run
-//! use lilygo_epd47::display::Rectangle;
+//! use lilygo_t5s3paperpro::display::Rectangle;
 //!
 //! let area = Rectangle {
 //!     x: 40,
@@ -96,6 +100,7 @@ pub mod display;
 pub mod input;
 pub mod power;
 pub mod rtc;
+pub mod sdcard;
 pub mod touchscreen;
 
 #[cfg(feature = "embedded-graphics")]
@@ -145,6 +150,7 @@ pub use crate::{
     input::{Buttons, InputState},
     power::WakeStatus,
     rtc::Clock,
+    sdcard::{DirectoryEntry as SdDirectoryEntry, SdCard},
     touchscreen::{TouchPoint, TouchState},
 };
 
@@ -152,7 +158,7 @@ pub use crate::{
 #[macro_export]
 macro_rules! pin_config {
     ($name:expr) => {{
-        lilygo_epd47::PinConfig {
+        lilygo_t5s3paperpro::PinConfig {
             data0: $name.GPIO5,
             data1: $name.GPIO6,
             data2: $name.GPIO7,
@@ -171,6 +177,19 @@ macro_rules! pin_config {
             touch_int: $name.GPIO3,
             touch_rst: $name.GPIO9,
             boot_btn: $name.GPIO0,
+        }
+    }};
+}
+
+/// Convenience macro to build the SD card pin config struct.
+#[macro_export]
+macro_rules! sdcard_pin_config {
+    ($name:expr) => {{
+        lilygo_t5s3paperpro::sdcard::PinConfig {
+            miso: $name.GPIO21,
+            mosi: $name.GPIO13,
+            sclk: $name.GPIO14,
+            cs: $name.GPIO12,
         }
     }};
 }

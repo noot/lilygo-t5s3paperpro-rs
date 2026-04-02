@@ -1,12 +1,10 @@
-# LilyGo EPD47 Rust HAL
+# LilyGo T5 S3 ePaper Pro / Lite Rust HAL
 
 ![Demo](_docs/hello-world.jpg)
 
-Simple driver for
-the [LilyGo T5 4.7 Inch E-Paper display](https://www.lilygo.cc/en-pl/products/t5-4-7-inch-e-paper-v2-3).
-The driver is wired for the LilyGo T5 S3 Paper Pro Lite / T5S3 4.7 inch E-Paper Pro hardware variant (ESP32-S3).
+Rust driver fork of the [fridolin-koch/lilygo-epd47-rs](https://github.com/fridolin-koch/lilygo-epd47-rs) project, now focused primarily on the [LilyGo T5 E-Paper S3 Pro](https://lilygo.cc/products/t5-e-paper-s3-pro) device series.
 
-It should also work on the touch version, but I don't have the necessary hardware to validate that claim.
+This fork is wired for the ESP32-S3 based T5 S3 Paper Pro / Paper Pro Lite family and was heavily informed by analysis of the official LilyGo firmware at [Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO](https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO).
 
 This library depends on `alloc` and requires you to set up the global allocator for the PSRAM. This is mainly due to
 space requirements of the framebuffer and the lut (~325kb).
@@ -19,8 +17,7 @@ Built using [`esp-hal`] and [`embedded-graphics`]
 
 **WARNING:**
 
-This is an experimental port of the C library. I ported the basic functionality and tried to simplify it as much as
-possible. I give no guarantee that this is the correct usage of the hardware, use at your own risk!
+This remains an experimental hardware-focused fork. The current implementation was derived from reverse-engineering the vendor firmware and validating behavior on the T5 S3 Pro Lite hardware, so treat it as practical rather than authoritative.
 
 ## Update Modes
 
@@ -41,7 +38,7 @@ It is not a general grayscale partial-refresh API.
 
 The crate also exposes the board's boot/wakeup path:
 
-- `lilygo_epd47::power::wake_status()` reports the current reset reason and wakeup source
+- `lilygo_t5s3paperpro::power::wake_status()` reports the current reset reason and wakeup source
 - `display.deep_sleep(lpwr, timer)` powers the panel down and enters deep sleep
 - `power::shutdown(display)` requests full PMIC shutdown through the BQ25896 charger
 
@@ -51,12 +48,23 @@ The crate also exposes the board's boot/wakeup path:
 
 ## RTC Clock
 
-The crate exposes a small RTC wrapper as `lilygo_epd47::rtc::Clock` for the RTC-backed timekeeping functions:
+The crate exposes a small RTC wrapper as `lilygo_t5s3paperpro::rtc::Clock` for the RTC-backed timekeeping functions:
 
 - `Clock::now_us()` / `Clock::now()`
 - `Clock::set_now_us(...)` / `Clock::set_now(...)`
 - `Clock::uptime()`
 - `Clock::estimate_xtal_frequency_mhz()`
+
+## SD Card
+
+The crate exposes the SPI-connected microSD slot as `lilygo_t5s3paperpro::sdcard::SdCard`.
+
+Use `sdcard_pin_config!(peripherals)` with `peripherals.SPI2` to create it. The current helper API is intentionally small:
+
+- `card_size_bytes()`
+- `write_root_file(...)`
+- `read_root_file(...)`
+- `list_root()`
 
 ## Usage
 
@@ -79,7 +87,7 @@ use embedded_graphics::{
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, prelude::*};
-use lilygo_epd47::{pin_config, Display, DrawMode};
+use lilygo_t5s3paperpro::{pin_config, Display, DrawMode};
 
 #[entry]
 fn main() -> ! {
@@ -119,7 +127,7 @@ fn main() -> ! {
 For low-flicker UI updates, draw into a small region and then flush just that area:
 
 ```rust
-use lilygo_epd47::display::Rectangle;
+use lilygo_t5s3paperpro::display::Rectangle;
 
 let area = Rectangle {
     x: 40,
@@ -135,7 +143,7 @@ For deep sleep:
 
 ```rust
 use core::time::Duration;
-use lilygo_epd47::power;
+use lilygo_t5s3paperpro::power;
 
 let wake = power::wake_status();
 display.deep_sleep(peripherals.LPWR, Some(Duration::from_secs(30)));
@@ -152,13 +160,11 @@ Run examples like this ` cargo run --release --example <name>`.
 - `hello-world` - [`embedded-graphics`] demo. The bmp images used have been converted using
   imagemagick
   `convert <source>.png -size 200x200 -background white -flatten -alpha off -type Grayscale -depth 4 <output>.bmp`
+- `sdcard` - Writes `/TEST.TXT` to the SD card and displays a root directory listing
 - `rtc-clock` - RTC clock example showing current RTC time, uptime, wake reason, then deep sleeping and waking again
-- `screen-repair` - Showcases how to use the repair
-  methodology [provided by lilygo](https://github.com/Xinyuan-LilyGO/LilyGo-EPD47/blob/master/examples/screen_repair/screen_repair.ino).
+- `screen-repair` - Runs the full panel repair / conditioning routine
 - `simple` - Boilerplate, same as the example above.
-- `deepsleep` - Deep sleep example. Note: my board suffered from occasional brownouts, I fixed it
-  using [this](https://github.com/Xinyuan-LilyGO/LilyGo-EPD47/issues/98#issuecomment-1715584471) modification. I
-  measured ~230μA on average during deep sleep using the Nordic PPKII.
+- `deepsleep` - Deep sleep example using the boot button or timer as wake sources
 
 ## Todos
 
@@ -168,10 +174,7 @@ Run examples like this ` cargo run --release --example <name>`.
 
 ## Credits
 
-This project is largely based on the C implementations provided by:
-
-- [Official LilyGo Driver](https://github.com/Xinyuan-LilyGO/LilyGo-EPD47)
-- [epdiy](https://github.com/vroland/epdiy)
+This fork started from [fridolin-koch/lilygo-epd47-rs](https://github.com/fridolin-koch/lilygo-epd47-rs) and was then adapted substantially for the T5 S3 Pro device family by tracing the vendor firmware in [Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO](https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO).
 
 ## License
 

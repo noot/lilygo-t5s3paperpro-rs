@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_epd47;
+extern crate lilygo_t5s3paperpro;
 
 use core::{format_args, time::Duration};
 
@@ -17,7 +17,7 @@ use esp_hal::{
     main,
     ram,
 };
-use lilygo_epd47::{pin_config, power, Display, DrawMode};
+use lilygo_t5s3paperpro::{pin_config, power, Display, DrawMode};
 use u8g2_fonts::FontRenderer;
 
 static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_mr>();
