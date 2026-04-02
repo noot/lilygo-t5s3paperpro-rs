@@ -550,8 +550,12 @@ fn update_lut(conversion_lut: &mut [u8], k: usize, mode: DrawMode) {
             conversion_lut[l + p] &= 0xCF
         }
     }
-    for l in (k << 12)..((k + 1) << 12) {
-        conversion_lut[l] &= 0x3F;
+    for entry in conversion_lut
+        .iter_mut()
+        .take((k + 1) << 12)
+        .skip(k << 12)
+    {
+        *entry &= 0x3F;
     }
 }
 
@@ -586,7 +590,7 @@ fn build_difference_line(
     let x_start = area.x as usize;
     let x_end = x_start + area.width as usize;
 
-    for x in 0..Display::WIDTH as usize {
+    for (x, slot) in line.iter_mut().enumerate().take(Display::WIDTH as usize) {
         let previous = nibble_at(previous_line, x);
         let target = if (x_start..x_end).contains(&x) {
             nibble_at(framebuffer_line, x)
@@ -594,7 +598,7 @@ fn build_difference_line(
             previous
         };
         dirty |= target != previous;
-        line[x] = (target << 4) | previous;
+        *slot = (target << 4) | previous;
     }
 
     dirty
@@ -602,7 +606,7 @@ fn build_difference_line(
 
 fn nibble_at(line: &[u8], x: usize) -> u8 {
     let value = line[x / 2];
-    if x % 2 == 0 {
+    if x.is_multiple_of(2) {
         value & 0x0F
     } else {
         value >> 4

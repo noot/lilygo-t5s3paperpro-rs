@@ -52,7 +52,7 @@ fn main() -> ! {
     let mut body = String::new();
     let _ = writeln!(body, "SD: {} MB", card_size / (1024 * 1024));
     let _ = writeln!(body, "Wrote /TEST.TXT");
-    let _ = writeln!(body, "");
+    let _ = writeln!(body);
 
     for entry in listing.iter().take(10) {
         let kind = if entry.is_directory { 'D' } else { 'F' };
@@ -81,5 +81,7 @@ fn main() -> ! {
         .expect("to flush to display");
     display.power_off().expect("to power off display");
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

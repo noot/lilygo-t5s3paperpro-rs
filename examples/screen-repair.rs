@@ -37,5 +37,7 @@ fn main() -> ! {
     display.repair(delay).expect("to repair display");
     display.power_off().expect("to power off display");
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

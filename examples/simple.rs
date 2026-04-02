@@ -57,5 +57,7 @@ fn main() -> ! {
     display.power_off().expect("to power off display");
 
     info!("do nothing");
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

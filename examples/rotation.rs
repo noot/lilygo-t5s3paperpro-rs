@@ -136,5 +136,7 @@ fn main() -> ! {
     display.flush(DrawMode::BlackOnWhite).unwrap();
     display.power_off().expect("to power off display");
 
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
