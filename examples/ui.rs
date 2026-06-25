@@ -120,6 +120,35 @@ enum Screen {
     Sleep,
 }
 
+impl Screen {
+    fn to_index(self) -> u8 {
+        match self {
+            Screen::Home => 0,
+            Screen::Gps => 1,
+            Screen::Lora => 2,
+            Screen::Frontlight => 3,
+            Screen::Sleep => 4,
+        }
+    }
+
+    // map a stored index back to a screen. the Sleep screen and any
+    // unexpected value fall back to Home, so waking never lands on the sleep
+    // menu or on garbage left by an interrupted persistent write.
+    fn from_index(value: u8) -> Self {
+        match value {
+            1 => Screen::Gps,
+            2 => Screen::Lora,
+            3 => Screen::Frontlight,
+            _ => Screen::Home,
+        }
+    }
+}
+
+// last visited screen, stored in RTC fast memory so it survives the reset that
+// deep sleep performs. zeroed (Home) on first boot, then retained across sleep.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut LAST_SCREEN: u8 = 0;
+
 struct Icon {
     label: &'static str,
     glyph: &'static str,
@@ -742,7 +771,14 @@ fn main() -> ! {
         }
     }
 
-    let mut current_screen = Screen::Home;
+    // restore the screen we slept on. only trust the stored value when we
+    // actually woke from deep sleep; any other reset starts at Home. reading
+    // the RTC-backed static is sound here as the UI is single-threaded.
+    let mut current_screen = if lilygo_t5s3paperpro::power::wake_status().woke_from_deep_sleep() {
+        Screen::from_index(unsafe { LAST_SCREEN })
+    } else {
+        Screen::Home
+    };
     let mut needs_redraw = true;
     let mut brightness: u8 = 0;
 
@@ -822,6 +858,12 @@ fn main() -> ! {
             needs_redraw = true;
         }
 
+        // the auxiliary button sleeps from any screen; the current screen is
+        // restored on wake.
+        if input.buttons.auxiliary {
+            break;
+        }
+
         if let Some(state) = input.touch {
             if let Some(point) = state.first_point() {
                 let (sx, sy) = touch_to_screen(point.x, point.y);
@@ -897,6 +939,11 @@ fn main() -> ! {
     // enter deep sleep. the boot button wakes the chip, which resets and
     // re-runs main() from the top.
     light.set_brightness(0);
+    // remember where we were so wake lands on the same screen. single-threaded,
+    // so writing the RTC-backed static is sound.
+    unsafe {
+        LAST_SCREEN = current_screen.to_index();
+    }
     let pct = display.battery_percentage().unwrap_or(0);
     display.clear().ok();
     draw_screensaver(&mut display, pct);
