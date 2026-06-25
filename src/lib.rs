@@ -111,6 +111,9 @@ pub mod graphics;
 #[cfg(feature = "gps")]
 pub mod gps;
 
+#[cfg(feature = "lora")]
+pub mod lora;
+
 mod battery;
 mod ed047tc1;
 mod rmt;
@@ -234,6 +237,23 @@ macro_rules! gps_pin_config {
         lilygo_t5s3paperpro::gps::PinConfig {
             tx: $name.GPIO43,
             rx: $name.GPIO44,
+        }
+    }};
+}
+
+/// Convenience macro to build the LoRa pin config struct.
+#[cfg(feature = "lora")]
+#[macro_export]
+macro_rules! lora_pin_config {
+    ($name:expr) => {{
+        lilygo_t5s3paperpro::lora::PinConfig {
+            sclk: $name.GPIO14,
+            mosi: $name.GPIO13,
+            miso: $name.GPIO21,
+            cs: $name.GPIO46,
+            rst: $name.GPIO1,
+            busy: $name.GPIO47,
+            dio1: $name.GPIO10,
         }
     }};
 }

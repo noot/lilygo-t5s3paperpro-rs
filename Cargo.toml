@@ -53,3 +53,4 @@ default = ["embedded-graphics"]
 
 embedded-graphics = ["embedded-graphics-core"]
 gps = ["nmea"]
+lora = []
