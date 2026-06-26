@@ -3,9 +3,10 @@ runner = "espflash flash --monitor --chip esp32s3"
 
 
 [env]
-# keep app logs at debug, but silence embedded-sdmmc's per-block read spam that
-# otherwise floods the serial port (and slows transfers) during SD card reads
-ESP_LOG = "debug,embedded_sdmmc=warn"
+# default everything to info so the verbose esp dependencies (esp-rtos scheduler,
+# esp-hal DMA, esp-radio, embedded-sdmmc) don't flood the serial port; keep this
+# crate's own logs at debug. app examples log via println!, which always shows.
+ESP_LOG = "info,lilygo_t5s3paperpro=debug"
 
 [build]
 rustflags = [

@@ -23,6 +23,15 @@ embedded-hal-bus = "0.3.0"
 embedded-sdmmc = { version = "0.9.0", default-features = false, features = ["log"] }
 nmea = { version = "0.7", default-features = false, features = ["GNSS", "other"], optional = true }
 
+# wifi stack (optional; used by the clock example). matches the proven versions
+# from the waveshare-epaper project, retargeted to the esp32s3.
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "wifi", "log-04"], optional = true }
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "embassy", "log-04"], optional = true }
+embassy-executor = { version = "0.10.0", optional = true }
+embassy-net = { version = "0.9", features = ["dhcpv4", "medium-ethernet", "udp", "dns"], optional = true }
+embassy-time = { version = "0.5", optional = true }
+static_cell = { version = "2.1", optional = true }
+
 [dev-dependencies]
 esp-println = { version = "0.17.0", features = ["esp32s3", "log-04"] }
 esp-backtrace = { version = "0.19.0", features = [
@@ -34,6 +43,11 @@ u8g2-fonts = { version = "0.7.2", features = ["embedded_graphics_textstyle"] }
 embedded-graphics = "0.8.1"
 
 tinybmp = { version = "0.6.0" }
+
+[[example]]
+name = "clock"
+required-features = ["wifi"]
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
@@ -54,3 +68,11 @@ default = ["embedded-graphics"]
 embedded-graphics = ["embedded-graphics-core"]
 gps = ["nmea"]
 lora = []
+wifi = [
+    "dep:esp-radio",
+    "dep:esp-rtos",
+    "dep:embassy-executor",
+    "dep:embassy-net",
+    "dep:embassy-time",
+    "dep:static_cell",
+]
