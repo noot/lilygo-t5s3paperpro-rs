@@ -827,10 +827,11 @@ const MSG_H: u32 = 170;
 const LORA_STATUS_Y: i32 = 338;
 const MSG_MAX: usize = 200;
 
-// recent sent-message history, shown between the status line and the keyboard.
-const HIST_Y: i32 = 372;
-const HIST_H: u32 = 210;
-const HIST_MAX: usize = 4;
+// sent + received message logs, stacked between the status line and keyboard.
+const SENT_Y: i32 = 368;
+const RECV_Y: i32 = 476;
+const LIST_H: u32 = 102;
+const LIST_MAX: usize = 3;
 
 const KB_LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const KB_SYMBOLS: [&str; 3] = ["1234567890", "@#$&-+()/", "*\"':;!?,"];
@@ -1061,32 +1062,33 @@ fn draw_lora_status(display: &mut Display, status: &str) {
     .ok();
 }
 
-// the last few broadcasts (newest first), each truncated to one line.
-fn draw_history(display: &mut Display, history: &[String]) {
-    Rectangle::new(Point::new(MSG_X, HIST_Y), Size::new(MSG_W, HIST_H))
+// a titled message log (newest first), each entry truncated to one line. used
+// for both the sent and received lists; `y` is the top of its section.
+fn draw_list(display: &mut Display, y: i32, header: &str, items: &[String]) {
+    Rectangle::new(Point::new(MSG_X, y), Size::new(MSG_W, LIST_H))
         .into_styled(PrimitiveStyle::with_fill(Gray4::WHITE))
         .draw(display)
         .ok();
     Text::new(
-        "recent broadcasts:",
-        Point::new(MSG_X + 4, HIST_Y + 14),
-        MonoTextStyle::new(&FONT_6X10, Gray4::BLACK),
+        header,
+        Point::new(MSG_X + 4, y + 16),
+        MonoTextStyle::new(&FONT_9X15, Gray4::BLACK),
     )
     .draw(display)
     .ok();
 
-    let font = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
-    let mut y = HIST_Y + 40;
-    for msg in history.iter().rev() {
-        let line = if msg.len() > 44 {
-            format!("> {}...", &msg[..44])
+    let font = MonoTextStyle::new(&FONT_6X10, Gray4::BLACK);
+    let mut ey = y + 40;
+    for msg in items.iter().rev() {
+        let line = if msg.len() > 66 {
+            format!("> {}...", &msg[..66])
         } else {
             format!("> {msg}")
         };
-        Text::new(&line, Point::new(MSG_X + 8, y), font)
+        Text::new(&line, Point::new(MSG_X + 10, ey), font)
             .draw(display)
             .ok();
-        y += 26;
+        ey += 20;
     }
 }
 
@@ -1094,7 +1096,8 @@ fn draw_lora_screen(
     display: &mut Display,
     message: &str,
     status: &str,
-    history: &[String],
+    sent: &[String],
+    received: &[String],
     symbols: bool,
     shift: bool,
 ) {
@@ -1110,7 +1113,8 @@ fn draw_lora_screen(
     .ok();
     draw_message(display, message);
     draw_lora_status(display, status);
-    draw_history(display, history);
+    draw_list(display, SENT_Y, "sent", sent);
+    draw_list(display, RECV_Y, "received", received);
     draw_keyboard(display, symbols, shift);
 }
 
@@ -1122,20 +1126,24 @@ fn lora_status_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
     screen_to_native_rect(MSG_X, LORA_STATUS_Y, MSG_W as i32, 26)
 }
 
-fn history_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
-    screen_to_native_rect(MSG_X, HIST_Y, MSG_W as i32, HIST_H as i32)
+fn sent_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+    screen_to_native_rect(MSG_X, SENT_Y, MSG_W as i32, LIST_H as i32)
+}
+
+fn received_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+    screen_to_native_rect(MSG_X, RECV_Y, MSG_W as i32, LIST_H as i32)
 }
 
 fn keyboard_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
     screen_to_native_rect(0, KB_TOP - 6, SCREEN_W, 4 * (KB_KEY_H + KB_GAP_Y) + 12)
 }
 
-// broadcast a message over lora. the radio shares SPI2 with the SD card, which
-// is only touched at sleep (after the main loop), so the bus is free here.
-// steal the bus + radio pins for a one-shot transmit (mirroring the wifi
-// re-sync); dropping `radio` releases them. the 3.3v rail powered up at boot,
-// so no settle delay is needed.
-fn send_lora(message: &[u8]) -> Result<(), lilygo_t5s3paperpro::lora::Error> {
+// build the lora radio used by the send/receive page. it shares SPI2 with the
+// SD card, which is only touched at sleep (after the main loop), so the bus is
+// free while this page is open. steal the bus + radio pins (mirroring the wifi
+// re-sync); dropping the returned radio releases them. the 3.3v rail powered up
+// at boot, so no settle delay is needed.
+fn make_radio() -> Result<Lora<'static>, lilygo_t5s3paperpro::lora::Error> {
     let pins = lilygo_t5s3paperpro::lora::PinConfig {
         sclk: unsafe { esp_hal::peripherals::GPIO14::steal() },
         mosi: unsafe { esp_hal::peripherals::GPIO13::steal() },
@@ -1146,15 +1154,14 @@ fn send_lora(message: &[u8]) -> Result<(), lilygo_t5s3paperpro::lora::Error> {
         dio1: unsafe { esp_hal::peripherals::GPIO10::steal() },
     };
     let spi = unsafe { esp_hal::peripherals::SPI2::steal() };
-    // match the t3-s3 receiver, whose Config::default() listens at SF7. every
-    // other parameter (915 MHz, BW125, CR4/5, preamble 8, private sync word)
-    // already agrees; only the spreading factor differed.
+    // match the t3-s3 receiver, whose Config::default() uses SF7. every other
+    // parameter (915 MHz, BW125, CR4/5, preamble 8, private sync word) already
+    // agrees; only the spreading factor differed.
     let config = LoraConfig {
         spreading_factor: lilygo_t5s3paperpro::lora::SpreadingFactor::Sf7,
         ..LoraConfig::default()
     };
-    let mut radio = Lora::new(pins, spi, &config)?;
-    radio.transmit(message)
+    Lora::new(pins, spi, &config)
 }
 
 // ── drawing: sleep ──────────────────────────────────────────────────
@@ -1467,11 +1474,15 @@ async fn main(_spawner: Spawner) -> ! {
     // time of the last clock sync, used to schedule periodic re-syncs.
     let mut last_resync_secs = clock.now_us() / 1_000_000;
 
-    // lora composer state: the message being typed, a status line, the last few
-    // sent messages, and the keyboard's symbol/shift toggles.
+    // lora send/receive state: the message being typed, a status line, the last
+    // few sent and received messages, and the keyboard's symbol/shift toggles.
+    // `radio` is live only while the lora screen is open (see the loop).
     let mut lora_message = String::new();
     let mut lora_status = String::from("type a message, then SEND");
-    let mut lora_history: Vec<String> = Vec::new();
+    let mut lora_sent: Vec<String> = Vec::new();
+    let mut lora_recv: Vec<String> = Vec::new();
+    let mut radio: Option<Lora<'static>> = None;
+    let mut radio_tried = false;
     let mut kb_symbols = false;
     let mut kb_shift = false;
 
@@ -1538,7 +1549,8 @@ async fn main(_spawner: Spawner) -> ! {
                     &mut display,
                     &lora_message,
                     &lora_status,
-                    &lora_history,
+                    &lora_sent,
+                    &lora_recv,
                     kb_symbols,
                     kb_shift,
                 ),
@@ -1655,15 +1667,15 @@ async fn main(_spawner: Spawner) -> ! {
                                 Key::Send => {
                                     if lora_message.is_empty() {
                                         lora_status = String::from("nothing to send");
-                                    } else {
-                                        match send_lora(lora_message.as_bytes()) {
+                                    } else if let Some(r) = &mut radio {
+                                        match r.transmit(lora_message.as_bytes()) {
                                             Ok(()) => {
                                                 esp_println::println!("lora tx: {lora_message}");
                                                 lora_status =
                                                     format!("sent {} bytes", lora_message.len());
-                                                lora_history.push(lora_message.clone());
-                                                if lora_history.len() > HIST_MAX {
-                                                    lora_history.remove(0);
+                                                lora_sent.push(lora_message.clone());
+                                                if lora_sent.len() > LIST_MAX {
+                                                    lora_sent.remove(0);
                                                 }
                                                 lora_message.clear();
                                             }
@@ -1672,10 +1684,14 @@ async fn main(_spawner: Spawner) -> ! {
                                                 lora_status = format!("tx error: {e}");
                                             }
                                         }
+                                        // resume listening after transmitting.
+                                        r.start_receive().ok();
                                         draw_message(&mut display, &lora_message);
                                         display.flush_partial_fast(message_box_native_rect()).ok();
-                                        draw_history(&mut display, &lora_history);
-                                        display.flush_partial_fast(history_native_rect()).ok();
+                                        draw_list(&mut display, SENT_Y, "sent", &lora_sent);
+                                        display.flush_partial_fast(sent_native_rect()).ok();
+                                    } else {
+                                        lora_status = String::from("radio not ready");
                                     }
                                     draw_lora_status(&mut display, &lora_status);
                                     display.flush_partial_fast(lora_status_native_rect()).ok();
@@ -1711,6 +1727,56 @@ async fn main(_spawner: Spawner) -> ! {
             None => touch_active = false,
         }
 
+        // the radio listens only while the lora screen is open: bring it up in
+        // receive mode on entry, set it to standby and drop it on leave (frees
+        // SPI2 for the SD wallpaper at sleep and avoids drawing rx current).
+        // `radio_tried` keeps a failed init from re-resetting the chip every
+        // pass; it re-arms when the screen is left.
+        if current_screen == Screen::Lora {
+            if radio.is_none() && !radio_tried {
+                radio_tried = true;
+                match make_radio() {
+                    Ok(mut r) => {
+                        if let Err(e) = r.start_receive() {
+                            esp_println::println!("lora: start rx failed: {e}");
+                        }
+                        radio = Some(r);
+                    }
+                    Err(e) => {
+                        esp_println::println!("lora: init failed: {e}");
+                        lora_status = String::from("radio init failed");
+                    }
+                }
+            }
+        } else {
+            radio_tried = false;
+            if let Some(mut r) = radio.take() {
+                r.standby().ok();
+            }
+        }
+
+        // poll for an incoming packet (cheap: just a dio1 read until one lands)
+        // and append it to the received log.
+        if current_screen == Screen::Lora {
+            if let Some(r) = &mut radio {
+                let mut rx = [0u8; 255];
+                if let Ok(Some(n)) = r.poll_receive(&mut rx) {
+                    let rssi = r.rssi();
+                    let text = core::str::from_utf8(&rx[..n]).unwrap_or("<binary>");
+                    esp_println::println!("lora rx: {text} ({rssi} dBm)");
+                    lora_recv.push(String::from(text));
+                    if lora_recv.len() > LIST_MAX {
+                        lora_recv.remove(0);
+                    }
+                    lora_status = format!("received {n} bytes ({rssi} dBm)");
+                    draw_list(&mut display, RECV_Y, "received", &lora_recv);
+                    display.flush_partial_fast(received_native_rect()).ok();
+                    draw_lora_status(&mut display, &lora_status);
+                    display.flush_partial_fast(lora_status_native_rect()).ok();
+                }
+            }
+        }
+
         // keep the GPS UART drained with a single non-blocking read per pass
         // and refresh the readout periodically. one read every ~50ms keeps
         // the 128-byte FIFO (~133ms at 9600 baud) from overflowing without
@@ -1740,6 +1806,11 @@ async fn main(_spawner: Spawner) -> ! {
     // enter deep sleep. the boot button wakes the chip, which resets and
     // re-runs main() from the top.
     light.set_brightness(0);
+    // if we slept straight from the lora screen the radio still holds SPI2 and
+    // the lora CS; standby and release them so the SD wallpaper can use the bus.
+    if let Some(mut r) = radio.take() {
+        r.standby().ok();
+    }
     // remember where we were so wake lands on the same screen. single-threaded,
     // so writing the RTC-backed static is sound.
     unsafe {
