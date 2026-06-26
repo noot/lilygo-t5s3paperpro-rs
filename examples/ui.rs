@@ -813,7 +813,8 @@ const KB_KEY_W: i32 = 50;
 const KB_KEY_H: i32 = 78;
 const KB_GAP: i32 = 4;
 const KB_GAP_Y: i32 = 8;
-const KB_TOP: i32 = 480;
+// keyboard sits at the bottom of the screen (rows end ~24px from the edge).
+const KB_TOP: i32 = 600;
 const KB_X: i32 = 2;
 const KB_FULL_W: i32 = 536;
 const KB_TOGGLE_W: i32 = 90;
@@ -822,9 +823,14 @@ const KB_SEND_W: i32 = 110;
 const MSG_X: i32 = 30;
 const MSG_Y: i32 = 150;
 const MSG_W: u32 = 480;
-const MSG_H: u32 = 190;
-const LORA_STATUS_Y: i32 = 360;
+const MSG_H: u32 = 170;
+const LORA_STATUS_Y: i32 = 338;
 const MSG_MAX: usize = 200;
+
+// recent sent-message history, shown between the status line and the keyboard.
+const HIST_Y: i32 = 372;
+const HIST_H: u32 = 210;
+const HIST_MAX: usize = 4;
 
 const KB_LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const KB_SYMBOLS: [&str; 3] = ["1234567890", "@#$&-+()/", "*\"':;!?,"];
@@ -1055,10 +1061,40 @@ fn draw_lora_status(display: &mut Display, status: &str) {
     .ok();
 }
 
+// the last few broadcasts (newest first), each truncated to one line.
+fn draw_history(display: &mut Display, history: &[String]) {
+    Rectangle::new(Point::new(MSG_X, HIST_Y), Size::new(MSG_W, HIST_H))
+        .into_styled(PrimitiveStyle::with_fill(Gray4::WHITE))
+        .draw(display)
+        .ok();
+    Text::new(
+        "recent broadcasts:",
+        Point::new(MSG_X + 4, HIST_Y + 14),
+        MonoTextStyle::new(&FONT_6X10, Gray4::BLACK),
+    )
+    .draw(display)
+    .ok();
+
+    let font = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
+    let mut y = HIST_Y + 40;
+    for msg in history.iter().rev() {
+        let line = if msg.len() > 44 {
+            format!("> {}...", &msg[..44])
+        } else {
+            format!("> {msg}")
+        };
+        Text::new(&line, Point::new(MSG_X + 8, y), font)
+            .draw(display)
+            .ok();
+        y += 26;
+    }
+}
+
 fn draw_lora_screen(
     display: &mut Display,
     message: &str,
     status: &str,
+    history: &[String],
     symbols: bool,
     shift: bool,
 ) {
@@ -1074,6 +1110,7 @@ fn draw_lora_screen(
     .ok();
     draw_message(display, message);
     draw_lora_status(display, status);
+    draw_history(display, history);
     draw_keyboard(display, symbols, shift);
 }
 
@@ -1083,6 +1120,10 @@ fn message_box_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
 
 fn lora_status_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
     screen_to_native_rect(MSG_X, LORA_STATUS_Y, MSG_W as i32, 26)
+}
+
+fn history_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+    screen_to_native_rect(MSG_X, HIST_Y, MSG_W as i32, HIST_H as i32)
 }
 
 fn keyboard_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
@@ -1420,14 +1461,17 @@ async fn main(_spawner: Spawner) -> ! {
     };
     let mut needs_redraw = true;
     let mut brightness: u8 = 0;
+    // whether a finger is currently down, so each tap is handled once on press.
+    let mut touch_active = false;
     let mut last_status_minute: u32 = 60;
     // time of the last clock sync, used to schedule periodic re-syncs.
     let mut last_resync_secs = clock.now_us() / 1_000_000;
 
-    // lora composer state: the message being typed, a status line, and the
-    // keyboard's symbol/shift toggles.
+    // lora composer state: the message being typed, a status line, the last few
+    // sent messages, and the keyboard's symbol/shift toggles.
     let mut lora_message = String::new();
     let mut lora_status = String::from("type a message, then SEND");
+    let mut lora_history: Vec<String> = Vec::new();
     let mut kb_symbols = false;
     let mut kb_shift = false;
 
@@ -1494,6 +1538,7 @@ async fn main(_spawner: Spawner) -> ! {
                     &mut display,
                     &lora_message,
                     &lora_status,
+                    &lora_history,
                     kb_symbols,
                     kb_shift,
                 ),
@@ -1550,8 +1595,12 @@ async fn main(_spawner: Spawner) -> ! {
             break;
         }
 
-        if let Some(state) = input.touch {
-            if let Some(point) = state.first_point() {
+        // edge-detect touches: act only on the press (untouched -> touched) and
+        // wait for release before accepting the next, so a tap held longer than
+        // one poll doesn't register repeatedly (double letters).
+        match input.touch.and_then(|s| s.first_point()) {
+            Some(point) if !touch_active => {
+                touch_active = true;
                 let (sx, sy) = touch_to_screen(point.x, point.y);
 
                 match current_screen {
@@ -1612,6 +1661,10 @@ async fn main(_spawner: Spawner) -> ! {
                                                 esp_println::println!("lora tx: {lora_message}");
                                                 lora_status =
                                                     format!("sent {} bytes", lora_message.len());
+                                                lora_history.push(lora_message.clone());
+                                                if lora_history.len() > HIST_MAX {
+                                                    lora_history.remove(0);
+                                                }
                                                 lora_message.clear();
                                             }
                                             Err(e) => {
@@ -1621,6 +1674,8 @@ async fn main(_spawner: Spawner) -> ! {
                                         }
                                         draw_message(&mut display, &lora_message);
                                         display.flush_partial_fast(message_box_native_rect()).ok();
+                                        draw_history(&mut display, &lora_history);
+                                        display.flush_partial_fast(history_native_rect()).ok();
                                     }
                                     draw_lora_status(&mut display, &lora_status);
                                     display.flush_partial_fast(lora_status_native_rect()).ok();
@@ -1651,9 +1706,9 @@ async fn main(_spawner: Spawner) -> ! {
                         }
                     }
                 }
-
-                delay.delay_millis(300);
             }
+            Some(_) => {}
+            None => touch_active = false,
         }
 
         // keep the GPS UART drained with a single non-blocking read per pass
