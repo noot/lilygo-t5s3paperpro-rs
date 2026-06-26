@@ -24,6 +24,7 @@ use esp_hal::{
     gpio::{Level, Output, OutputConfig},
     main,
     rng::Rng,
+    time::Instant,
 };
 use lilygo_t5s3paperpro::{
     display::DisplayRotation,
@@ -758,29 +759,25 @@ fn show_wallpaper<'d>(
             return false;
         }
     };
-    esp_println::println!("wallpaper: {} entries in {}", entries.len(), WALLPAPER_DIR);
 
     let mut paths = Vec::new();
     for entry in entries {
-        esp_println::println!(
-            "wallpaper: entry name={} dir={} size={}",
-            entry.name,
-            entry.is_directory,
-            entry.size
-        );
         if !entry.is_directory && is_bmp(&entry.name) {
             paths.push(entry.path);
         }
     }
     if paths.is_empty() {
-        esp_println::println!("wallpaper: no usable .bmp files");
+        esp_println::println!("wallpaper: no .bmp files in {WALLPAPER_DIR}");
         return false;
     }
 
-    // pick one at random, then fall through the rest so an unreadable file
-    // (e.g. a long filename the FAT layer can't open by its 8.3 name) is
-    // skipped rather than aborting.
-    let start = Rng::new().random() as usize % paths.len();
+    // mix the hardware RNG with a microsecond timer reading. with the radios
+    // off the RNG alone is biased (it kept picking the same file); the instant
+    // at which sleep is triggered adds real entropy. then fall through the rest
+    // so an unreadable file (e.g. a long name the FAT layer can't open by its
+    // 8.3 short name) is skipped rather than aborting.
+    let seed = Rng::new().random() ^ Instant::now().duration_since_epoch().as_micros() as u32;
+    let start = seed as usize % paths.len();
     for offset in 0..paths.len() {
         let path = &paths[(start + offset) % paths.len()];
         let bytes = match sdcard.read_file(path) {
@@ -795,7 +792,7 @@ fn show_wallpaper<'d>(
             continue;
         };
         if Image::new(&bmp, Point::zero()).draw(display).is_ok() {
-            esp_println::println!("wallpaper: drew {path} ({} bytes)", bytes.len());
+            esp_println::println!("wallpaper: drew {path}");
             return true;
         }
     }
