@@ -7,6 +7,15 @@ extern crate lilygo_t5s3paperpro;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
+use embassy_executor::Spawner;
+use embassy_futures::select::{select, Either};
+use embassy_net::{
+    dns::DnsQueryType,
+    udp::{PacketMetadata, UdpSocket},
+    IpEndpoint,
+    StackResources,
+};
+use embassy_time::{with_timeout, Duration, Timer};
 use embedded_graphics::{
     image::Image,
     mono_font::{
@@ -20,16 +29,20 @@ use embedded_graphics::{
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{
+    clock::CpuClock,
     delay::Delay,
     gpio::{Level, Output, OutputConfig},
-    main,
+    interrupt::software::SoftwareInterruptControl,
     rng::Rng,
     time::Instant,
+    timer::timg::TimerGroup,
 };
+use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
 use lilygo_t5s3paperpro::{
     display::DisplayRotation,
     pin_config,
     sdcard_pin_config,
+    Clock,
     Display,
     DrawMode,
     FrontLight,
@@ -40,6 +53,22 @@ use lilygo_t5s3paperpro::{gps::Gps, gps_pin_config};
 use tinybmp::Bmp;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+// ── wifi / ntp config (from .env at build time; see the justfile) ────
+const SSID: &str = match option_env!("SSID") {
+    Some(s) => s,
+    None => "changeme",
+};
+const PASSWORD: &str = match option_env!("PASSWORD") {
+    Some(s) => s,
+    None => "changeme",
+};
+const NTP_SERVER: &str = "pool.ntp.org";
+// seconds between the NTP epoch (1900-01-01) and the unix epoch (1970-01-01).
+const NTP_UNIX_DELTA: u64 = 2_208_988_800;
+// re-sync the clock over wifi this often. wifi is powered down between syncs so
+// it doesn't interfere with gps reception; the RTC only drifts seconds per day.
+const RESYNC_INTERVAL_SECS: u64 = 4 * 3600;
 
 // ── layout constants ────────────────────────────────────────────────
 const SCREEN_W: i32 = 540;
@@ -280,7 +309,13 @@ fn draw_battery_icon(display: &mut Display, x: i32, y: i32, pct: u16) {
     }
 }
 
-fn draw_status_bar(display: &mut Display, voltage: f32, pct: u16, temp: i8) {
+fn draw_status_bar(
+    display: &mut Display,
+    voltage: f32,
+    pct: u16,
+    temp: i8,
+    time: Option<(u32, u32)>,
+) {
     let status_font = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
 
     let v_int = voltage as u32;
@@ -305,6 +340,7 @@ fn draw_status_bar(display: &mut Display, voltage: f32, pct: u16, temp: i8) {
     .ok();
 
     draw_battery_icon(display, 497, 20, pct);
+    draw_statusbar_time(display, time);
 
     Rectangle::new(Point::new(0, STATUS_H - 2), Size::new(SCREEN_W as u32, 2))
         .into_styled(PrimitiveStyle::with_fill(Gray4::new(8)))
@@ -312,14 +348,126 @@ fn draw_status_bar(display: &mut Display, voltage: f32, pct: u16, temp: i8) {
         .ok();
 }
 
+// the clock (HH:MM, or --:-- before an NTP sync) shown centered in the status
+// bar. drawn over a white fill so the once-a-minute partial refresh cleanly
+// replaces the previous value.
+fn draw_statusbar_time(display: &mut Display, time: Option<(u32, u32)>) {
+    Rectangle::new(Point::new(215, 18), Size::new(110, 30))
+        .into_styled(PrimitiveStyle::with_fill(Gray4::WHITE))
+        .draw(display)
+        .ok();
+    let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
+    let mut buf = FmtBuf::<8>::new();
+    match time {
+        Some((h, m)) => write!(buf, "{h:02}:{m:02}").ok(),
+        None => write!(buf, "--:--").ok(),
+    };
+    Text::with_alignment(buf.as_str(), Point::new(270, 37), bold, Alignment::Center)
+        .draw(display)
+        .ok();
+}
+
+fn statusbar_time_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+    screen_to_native_rect(215, 18, 110, 30)
+}
+
+// read the RTC and return (hours, minutes) of local time, or None if it has
+// not been set to a real wall-clock time yet (i.e. no successful NTP sync).
+fn status_time(clock: &mut Clock) -> Option<(u32, u32)> {
+    let secs = clock.now_us() / 1_000_000;
+    // ~year 2020; below this the RTC is just counting up from boot, unsynced.
+    if secs > 1_600_000_000 {
+        let sod = (secs % 86_400) as u32;
+        Some((sod / 3600, (sod % 3600) / 60))
+    } else {
+        None
+    }
+}
+
+const DAY_NAMES: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+// read the RTC and return (day-of-week, year, month, day) of local time, or
+// None if it has not been synced to a real wall-clock time yet.
+fn status_date(clock: &mut Clock) -> Option<(usize, i64, u32, u32)> {
+    let secs = clock.now_us() / 1_000_000;
+    if secs > 1_600_000_000 {
+        let days = (secs / 86_400) as i64;
+        let (year, month, day) = civil_from_days(days);
+        let dow = ((days + 4) % 7) as usize; // 1970-01-01 was a Thursday; 0 = Sunday
+        Some((dow, year, month, day))
+    } else {
+        None
+    }
+}
+
+// gregorian (year, month, day) from days since the unix epoch.
+// see http://howardhinnant.github.io/date_algorithms.html#civil_from_days
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    (year + i64::from(month <= 2), month, day)
+}
+
 // ── drawing: home ───────────────────────────────────────────────────
-fn draw_home(display: &mut Display) {
+fn draw_home(display: &mut Display, date: Option<(usize, i64, u32, u32)>) {
     let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
     let small = MonoTextStyle::new(&FONT_6X10, Gray4::new(4));
 
     Text::with_alignment("T5 S3 Pro", Point::new(15, 37), bold, Alignment::Left)
         .draw(display)
         .ok();
+
+    // date header above the icon grid, once the clock has been synced
+    if let Some((dow, year, month, day)) = date {
+        let mut buf = FmtBuf::<32>::new();
+        write!(
+            buf,
+            "{}, {} {}, {}",
+            DAY_NAMES[dow],
+            MONTH_NAMES[(month - 1) as usize],
+            day,
+            year
+        )
+        .ok();
+        Text::with_alignment(
+            buf.as_str(),
+            Point::new(SCREEN_W / 2, 82),
+            bold,
+            Alignment::Center,
+        )
+        .draw(display)
+        .ok();
+    }
+
     let border = PrimitiveStyleBuilder::new()
         .stroke_color(Gray4::BLACK)
         .stroke_width(2)
@@ -492,8 +640,37 @@ fn brightness_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
 }
 
 // ── drawing: GPS ────────────────────────────────────────────────────
+// a position fix worth keeping on screen after the live fix drops, so a brief
+// signal loss shows the last known position instead of blanking to "--".
 #[cfg(feature = "gps")]
-fn draw_gps_data(display: &mut Display, gps: &Gps<'_>) {
+#[derive(Clone, Copy)]
+struct GpsFix {
+    lat: f64,
+    lng: f64,
+    alt: f32,
+    speed: f32,
+    hdop: f32,
+    vdop: f32,
+    sats: u32,
+}
+
+// snapshot the current fix, or None if the receiver has no position right now.
+#[cfg(feature = "gps")]
+fn current_fix(gps: &Gps<'_>) -> Option<GpsFix> {
+    let (lat, lng) = gps.location()?;
+    Some(GpsFix {
+        lat,
+        lng,
+        alt: gps.altitude().unwrap_or(0.0),
+        speed: gps.speed_over_ground().unwrap_or(0.0),
+        hdop: gps.hdop().unwrap_or(0.0),
+        vdop: gps.vdop().unwrap_or(0.0),
+        sats: gps.fix_satellites().unwrap_or(0),
+    })
+}
+
+#[cfg(feature = "gps")]
+fn draw_gps_data(display: &mut Display, gps: &Gps<'_>, last_fix: Option<GpsFix>) {
     let small = MonoTextStyle::new(&FONT_6X10, Gray4::BLACK);
     let x = 60;
     let line_h = 28;
@@ -513,16 +690,16 @@ fn draw_gps_data(display: &mut Display, gps: &Gps<'_>) {
         lilygo_t5s3paperpro::gps::Module::MiaM10Q => "MIA-M10Q",
     };
 
-    let fix_str = match gps.fix_type() {
-        Some(nmea::sentences::FixType::Gps) => "GPS",
-        Some(nmea::sentences::FixType::DGps) => "DGPS",
-        Some(nmea::sentences::FixType::Rtk) => "RTK",
-        Some(nmea::sentences::FixType::FloatRtk) => "float RTK",
-        Some(_) => "other",
-        None => "no fix",
-    };
+    let in_view = gps.satellites_in_view();
+    let current = current_fix(gps);
+    // when the live fix drops, keep showing the last known position rather than
+    // blanking it. the DU partial-refresh waveform is 1-bit, so we flag the
+    // stale data with text ("re-acquiring" / "(last)") rather than a grey tone
+    // it can't render.
+    let stale = current.is_none() && last_fix.is_some();
+    let shown = current.or(last_fix);
+    let mark = if stale { "  (last)" } else { "" };
 
-    let sats = gps.fix_satellites().unwrap_or(0);
     let mut buf = FmtBuf::<48>::new();
 
     write!(buf, "Module: {}", module_name).ok();
@@ -532,60 +709,93 @@ fn draw_gps_data(display: &mut Display, gps: &Gps<'_>) {
     y += line_h;
 
     buf.reset();
-    write!(buf, "Fix:    {} ({} sats)", fix_str, sats).ok();
+    match current {
+        Some(f) => {
+            let fix_str = match gps.fix_type() {
+                Some(nmea::sentences::FixType::Gps) => "GPS",
+                Some(nmea::sentences::FixType::DGps) => "DGPS",
+                Some(nmea::sentences::FixType::Rtk) => "RTK",
+                Some(nmea::sentences::FixType::FloatRtk) => "float RTK",
+                Some(_) => "other",
+                None => "fix",
+            };
+            write!(
+                buf,
+                "Fix:    {} ({} used, {} in view)",
+                fix_str, f.sats, in_view
+            )
+            .ok();
+        }
+        None if stale => {
+            write!(buf, "Fix:    re-acquiring ({in_view} in view)").ok();
+        }
+        None => {
+            write!(buf, "Fix:    no fix ({in_view} in view)").ok();
+        }
+    }
     Text::new(buf.as_str(), Point::new(x, y), small)
         .draw(display)
         .ok();
     y += line_h + 10;
 
-    if let Some((lat, lng)) = gps.location() {
-        buf.reset();
-        write!(buf, "Lat:    {:.6}", lat).ok();
-        Text::new(buf.as_str(), Point::new(x, y), small)
-            .draw(display)
-            .ok();
-        y += line_h;
+    match shown {
+        Some(f) => {
+            buf.reset();
+            write!(buf, "Lat:    {:.6}{}", f.lat, mark).ok();
+            Text::new(buf.as_str(), Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
 
-        buf.reset();
-        write!(buf, "Lon:    {:.6}", lng).ok();
-        Text::new(buf.as_str(), Point::new(x, y), small)
-            .draw(display)
-            .ok();
-        y += line_h;
-    } else {
-        Text::new("Lat:    --", Point::new(x, y), small)
-            .draw(display)
-            .ok();
-        y += line_h;
-        Text::new("Lon:    --", Point::new(x, y), small)
-            .draw(display)
-            .ok();
-        y += line_h;
+            buf.reset();
+            write!(buf, "Lon:    {:.6}{}", f.lng, mark).ok();
+            Text::new(buf.as_str(), Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+
+            buf.reset();
+            write!(buf, "Alt:    {:.1} m", f.alt).ok();
+            Text::new(buf.as_str(), Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+
+            buf.reset();
+            write!(buf, "Speed:  {:.1} kn", f.speed).ok();
+            Text::new(buf.as_str(), Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+
+            buf.reset();
+            write!(buf, "HDOP:   {:.1}   VDOP: {:.1}", f.hdop, f.vdop).ok();
+            Text::new(buf.as_str(), Point::new(x, y), small)
+                .draw(display)
+                .ok();
+        }
+        None => {
+            Text::new("Lat:    --", Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+            Text::new("Lon:    --", Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+            Text::new("Alt:    --", Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+            Text::new("Speed:  --", Point::new(x, y), small)
+                .draw(display)
+                .ok();
+            y += line_h;
+            Text::new("HDOP:   --   VDOP: --", Point::new(x, y), small)
+                .draw(display)
+                .ok();
+        }
     }
-
-    let alt = gps.altitude().unwrap_or(0.0);
-    buf.reset();
-    write!(buf, "Alt:    {:.1} m", alt).ok();
-    Text::new(buf.as_str(), Point::new(x, y), small)
-        .draw(display)
-        .ok();
-    y += line_h;
-
-    let speed = gps.speed_over_ground().unwrap_or(0.0);
-    buf.reset();
-    write!(buf, "Speed:  {:.1} kn", speed).ok();
-    Text::new(buf.as_str(), Point::new(x, y), small)
-        .draw(display)
-        .ok();
-    y += line_h;
-
-    let hdop = gps.hdop().unwrap_or(0.0);
-    let vdop = gps.vdop().unwrap_or(0.0);
-    buf.reset();
-    write!(buf, "HDOP:   {:.1}   VDOP: {:.1}", hdop, vdop).ok();
-    Text::new(buf.as_str(), Point::new(x, y), small)
-        .draw(display)
-        .ok();
 }
 
 #[cfg(feature = "gps")]
@@ -805,14 +1015,18 @@ fn is_bmp(name: &str) -> bool {
 }
 
 // ── main ────────────────────────────────────────────────────────────
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(_spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
-    // esp-hal 1.1 dropped the ESP_HAL_CONFIG_PSRAM_MODE build option; the panel
-    // has octal PSRAM, so request it explicitly (Default would auto-detect).
+
+    // internal-RAM heaps for the wifi stack (its DMA buffers can't live in
+    // PSRAM), plus a PSRAM heap for the display's large framebuffers. esp-hal
+    // 1.1 dropped ESP_HAL_CONFIG_PSRAM_MODE, so request octal mode explicitly.
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 64 * 1024);
     esp_alloc::psram_allocator!(
         peripherals.PSRAM,
         esp_hal::psram,
@@ -821,6 +1035,14 @@ fn main() -> ! {
             ..Default::default()
         }
     );
+
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
+    // a cold boot needs a fresh time sync; a wake from deep sleep keeps the RTC.
+    let woke = lilygo_t5s3paperpro::power::wake_status().woke_from_deep_sleep();
+    let mut clock = Clock::new(peripherals.LPWR);
 
     let mut display = Display::new(
         pin_config!(peripherals),
@@ -841,14 +1063,10 @@ fn main() -> ! {
     delay.delay_millis(10);
     display.clear().expect("to clear");
 
-    // detect the GPS module after the display has been powered on and
-    // cleared, matching the working gps example. the GPS power rail is
-    // enabled back in Display::new(), and powering + clearing the panel
-    // takes long enough for the module to finish booting, so the L76K
-    // reliably accepts the sentence-rate configuration sent during
-    // detection. detecting right after Display::new() instead leaves the
-    // module emitting its full default sentence set, which overruns the
-    // 128-byte UART FIFO and prevents a fix from ever assembling.
+    // detect the GPS module BEFORE bringing up wifi. the L76K probe is a plain
+    // UART exchange; doing it first keeps it in the same quiet, no-radio state
+    // it was validated in (running it after the ~20s wifi sync was failing to
+    // detect). the panel power-on + clear above gives the module time to boot.
     #[cfg(feature = "gps")]
     let mut gps: Option<Gps<'_>> = {
         let mut detect_delay = Delay::new();
@@ -876,30 +1094,65 @@ fn main() -> ! {
         }
     }
 
-    // restore the screen we slept on. only trust the stored value when we
-    // actually woke from deep sleep; any other reset starts at Home. reading
-    // the RTC-backed static is sound here as the UI is single-threaded.
-    let mut current_screen = if lilygo_t5s3paperpro::power::wake_status().woke_from_deep_sleep() {
+    // timezone offset (hours from UTC) from the TZ_OFFSET_HOURS build env (see
+    // .env); defaults to pacific daylight time. used for the initial sync and
+    // each periodic re-sync.
+    let offset_hours: i64 = option_env!("TZ_OFFSET_HOURS")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(-7);
+
+    // on a cold boot, sync the clock over wifi (best effort, with a timeout so
+    // it still boots when offline), then the radio powers down. on wake the RTC
+    // already holds the time, so we skip wifi for a fast resume.
+    if !woke {
+        Text::with_alignment(
+            "syncing clock over wifi...",
+            Point::new(SCREEN_W / 2, 400),
+            MonoTextStyle::new(&FONT_9X15, Gray4::BLACK),
+            Alignment::Center,
+        )
+        .draw(&mut display)
+        .ok();
+        display.flush(DrawMode::BlackOnWhite).expect("to flush");
+
+        match sync_time(peripherals.WIFI).await {
+            Some(unix) => set_local_time(&mut clock, unix, offset_hours),
+            None => esp_println::println!("clock: wifi/ntp sync failed, time unavailable"),
+        }
+    }
+
+    // restore the screen we slept on (only after a real deep-sleep wake; any
+    // other reset starts at Home). reading the RTC-backed static is sound as
+    // the UI is single-threaded.
+    let mut current_screen = if woke {
         Screen::from_index(unsafe { LAST_SCREEN })
     } else {
         Screen::Home
     };
     let mut needs_redraw = true;
     let mut brightness: u8 = 0;
+    let mut last_status_minute: u32 = 60;
+    // time of the last clock sync, used to schedule periodic re-syncs.
+    let mut last_resync_secs = clock.now_us() / 1_000_000;
 
     #[cfg(feature = "gps")]
     let mut gps_refresh: u16 = 0;
+    // last good position, kept so a dropped fix shows the previous coordinates
+    // (marked stale) instead of blanking out.
+    #[cfg(feature = "gps")]
+    let mut last_fix: Option<GpsFix> = None;
 
     loop {
         if needs_redraw {
             let voltage = display.battery_voltage().unwrap_or(0.0);
             let pct = display.battery_percentage().unwrap_or(0);
             let temp = display.panel_temperature().unwrap_or(0);
+            let now = status_time(&mut clock);
 
             display.clear().ok();
-            draw_status_bar(&mut display, voltage, pct, temp);
+            draw_status_bar(&mut display, voltage, pct, temp, now);
             match current_screen {
-                Screen::Home => draw_home(&mut display),
+                Screen::Home => draw_home(&mut display, status_date(&mut clock)),
                 Screen::Gps => {
                     let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
                     draw_back_button(&mut display);
@@ -914,7 +1167,7 @@ fn main() -> ! {
 
                     #[cfg(feature = "gps")]
                     match &gps {
-                        Some(g) => draw_gps_data(&mut display, g),
+                        Some(g) => draw_gps_data(&mut display, g, last_fix),
                         None => {
                             let small = MonoTextStyle::new(&FONT_6X10, Gray4::new(4));
                             Text::with_alignment(
@@ -947,11 +1200,37 @@ fn main() -> ! {
             }
             display.flush(DrawMode::BlackOnWhite).expect("to flush");
             needs_redraw = false;
+            last_status_minute = now.map_or(60, |(_, m)| m);
 
             #[cfg(feature = "gps")]
             {
                 gps_refresh = 0;
             }
+        }
+
+        // tick the status-bar clock once a minute via a fast partial refresh.
+        if !needs_redraw {
+            if let Some((h, m)) = status_time(&mut clock) {
+                if m != last_status_minute {
+                    last_status_minute = m;
+                    draw_statusbar_time(&mut display, Some((h, m)));
+                    display.flush_partial_fast(statusbar_time_rect()).ok();
+                }
+            }
+        }
+
+        // periodically bring wifi back up briefly to re-sync the clock, then it
+        // powers down again. correct against RTC drift without leaving the radio
+        // on to interfere with gps. (steal WIFI: the previous controller was
+        // dropped, so the peripheral is free to re-init.)
+        if clock.now_us() / 1_000_000 >= last_resync_secs + RESYNC_INTERVAL_SECS {
+            esp_println::println!("clock: periodic re-sync");
+            let wifi = unsafe { esp_hal::peripherals::WIFI::steal() };
+            if let Some(unix) = sync_time(wifi).await {
+                set_local_time(&mut clock, unix, offset_hours);
+            }
+            last_resync_secs = clock.now_us() / 1_000_000;
+            needs_redraw = true;
         }
 
         // poll touch/buttons every pass so input stays responsive. the GPS
@@ -1025,12 +1304,15 @@ fn main() -> ! {
         #[cfg(feature = "gps")]
         if let Some(ref mut g) = gps {
             g.update().ok();
+            if let Some(f) = current_fix(g) {
+                last_fix = Some(f);
+            }
 
             if current_screen == Screen::Gps && !needs_redraw {
                 gps_refresh += 1;
                 if gps_refresh >= GPS_REFRESH_TICKS {
                     gps_refresh = 0;
-                    draw_gps_data(&mut display, g);
+                    draw_gps_data(&mut display, g, last_fix);
                     display.flush_partial_fast(gps_data_native_rect()).ok();
                 }
             }
@@ -1062,5 +1344,91 @@ fn main() -> ! {
         draw_screensaver(&mut display, pct);
     }
     display.flush(DrawMode::BlackOnWhite).expect("to flush");
-    display.deep_sleep(peripherals.LPWR, None)
+    // hand LPWR back from the clock for the deep-sleep path.
+    display.deep_sleep(clock.into_inner(), None)
+}
+
+// connect to wifi, fetch the current unix time via SNTP, then power the radio
+// back down. self-contained: it drives the network stack (`runner`) alongside
+// the connect+query work via `select`, so when the query finishes everything
+// here drops — and WifiController's Drop deinitialises wifi (radio off), which
+// frees the 2.4 GHz band for gps and saves power. returns UTC unix seconds, or
+// None on timeout. re-callable for periodic re-sync (steal WIFI again).
+async fn sync_time(wifi: esp_hal::peripherals::WIFI<'static>) -> Option<u64> {
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(SSID)
+            .with_password(PASSWORD.into()),
+    );
+    let mut controller = WifiController::new(
+        wifi,
+        ControllerConfig::default().with_initial_config(station_config),
+    )
+    .ok()?;
+
+    let rng = Rng::new();
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+    let mut resources = StackResources::<3>::new();
+    let (stack, mut runner) = embassy_net::new(
+        Interface::station(),
+        embassy_net::Config::dhcpv4(Default::default()),
+        &mut resources,
+        seed,
+    );
+
+    let outcome = select(runner.run(), async {
+        controller.connect_async().await.ok()?;
+        with_timeout(Duration::from_secs(15), stack.wait_config_up())
+            .await
+            .ok()?;
+        esp_println::println!("wifi: connected");
+        for _ in 0..3 {
+            if let Some(unix) = sntp_unix_time(stack).await {
+                return Some(unix);
+            }
+            Timer::after(Duration::from_secs(2)).await;
+        }
+        None
+    })
+    .await;
+
+    match outcome {
+        Either::First(_) => None,
+        Either::Second(unix) => unix,
+    }
+}
+
+// set the RTC to local time from a UTC unix timestamp plus the configured
+// offset.
+fn set_local_time(clock: &mut Clock, utc_unix: u64, offset_hours: i64) {
+    let local = (utc_unix as i64 + offset_hours * 3600).max(0) as u64;
+    clock.set_now_us(local * 1_000_000);
+    esp_println::println!("clock: set local unix={local} (utc{offset_hours:+})");
+}
+
+// query an NTP server over UDP and return the current unix time in seconds.
+async fn sntp_unix_time(stack: embassy_net::Stack<'_>) -> Option<u64> {
+    let addrs = stack.dns_query(NTP_SERVER, DnsQueryType::A).await.ok()?;
+    let server = IpEndpoint::new(*addrs.first()?, 123);
+
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf = [0u8; 128];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf = [0u8; 128];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    socket.bind(50123).ok()?;
+
+    // minimal SNTP client request: LI=0, VN=3, Mode=3 (client).
+    let mut request = [0u8; 48];
+    request[0] = 0x1B;
+    socket.send_to(&request, server).await.ok()?;
+
+    let mut response = [0u8; 48];
+    let (n, _) = socket.recv_from(&mut response).await.ok()?;
+    if n < 44 {
+        return None;
+    }
+    // transmit timestamp (seconds since 1900) is at bytes 40..44, big-endian.
+    let ntp_secs = u32::from_be_bytes([response[40], response[41], response[42], response[43]]);
+    Some((ntp_secs as u64).saturating_sub(NTP_UNIX_DELTA))
 }

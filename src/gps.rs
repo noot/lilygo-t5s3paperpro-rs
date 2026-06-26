@@ -218,6 +218,13 @@ impl<'a> Gps<'a> {
         self.parser.num_of_fix_satellites
     }
 
+    /// Returns the number of satellites currently in view, as reported by GSV
+    /// sentences. Non-zero before a fix is acquired, so it is useful as a
+    /// "the receiver is tracking" indicator.
+    pub fn satellites_in_view(&self) -> usize {
+        self.parser.satellites().len()
+    }
+
     /// Returns the current fix type (None, GPS, DGPS, etc).
     pub fn fix_type(&self) -> Option<nmea::sentences::FixType> {
         self.parser.fix_type
@@ -305,9 +312,10 @@ impl<'a> Gps<'a> {
         self.send_command(b"$PCAS03,0,0,0,0,0,0,0,0,0,0,,,0,0*02\r\n", delay)?;
         // enable GPS + GLONASS
         self.send_command(b"$PCAS04,5*1C\r\n", delay)?;
-        // enable GGA + GSA + RMC, the sentences this driver exposes; keeping the
-        // per-second burst small avoids overflowing the UART RX FIFO
-        self.send_command(b"$PCAS03,1,0,1,0,1,0,0,0,0,0,,,0,0*03\r\n", delay)?;
+        // enable GGA + GSA + GSV + RMC: GGA/GSA/RMC carry the fix and position
+        // this driver exposes, and GSV adds satellites-in-view so callers can
+        // show tracking progress before a fix locks. (the 4th field is nGSV.)
+        self.send_command(b"$PCAS03,1,0,1,1,1,0,0,0,0,0,,,0,0*02\r\n", delay)?;
         // vehicle navigation mode
         self.send_command(b"$PCAS11,3*1E\r\n", delay)?;
         Ok(())

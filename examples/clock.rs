@@ -53,14 +53,38 @@ const NTP_UNIX_DELTA: u64 = 2_208_988_800;
 static TIME_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_spleen32x64_mr>();
 static LABEL_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_spleen16x32_mr>();
 
-// region (native, unrotated coords) covering the big HH:MM readout, used for
+const DAY_NAMES: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+// region (native, unrotated coords) covering the time + date readout, used for
 // fast partial refreshes once per minute.
-fn time_rect() -> Rectangle {
+fn clock_rect() -> Rectangle {
     Rectangle {
-        x: 340,
-        y: 210,
-        width: 280,
-        height: 120,
+        x: 200,
+        y: 190,
+        width: 560,
+        height: 180,
     }
 }
 
@@ -170,22 +194,20 @@ async fn main(spawner: Spawner) -> ! {
 
     // ── clock display loop ───────────────────────────────────────────
     display.clear().expect("to clear");
-    let (mut h, mut m, _) = hms(clock.now_us() / 1_000_000);
-    draw_time(&mut display, h, m);
+    draw_clock(&mut display, clock.now_us() / 1_000_000);
     display.flush(DrawMode::BlackOnWhite).expect("to flush");
-    let mut last_minute = m;
+    let (_, mut last_minute, _) = hms(clock.now_us() / 1_000_000);
 
     loop {
-        let (nh, nm, ns) = hms(clock.now_us() / 1_000_000);
-        if nm != last_minute {
-            last_minute = nm;
-            h = nh;
-            m = nm;
-            draw_time(&mut display, h, m);
-            display.flush_partial_fast(time_rect()).ok();
+        let local = clock.now_us() / 1_000_000;
+        let (_, minute, second) = hms(local);
+        if minute != last_minute {
+            last_minute = minute;
+            draw_clock(&mut display, local);
+            display.flush_partial_fast(clock_rect()).ok();
         }
         // sleep until the next minute boundary
-        let until_next_minute = 60u64.saturating_sub(ns as u64).max(1);
+        let until_next_minute = 60u64.saturating_sub(second as u64).max(1);
         Timer::after(Duration::from_secs(until_next_minute)).await;
     }
 }
@@ -216,11 +238,17 @@ fn draw_status(display: &mut Display, text: &str) {
         .ok();
 }
 
-fn draw_time(display: &mut Display, hours: u32, minutes: u32) {
+fn draw_clock(display: &mut Display, local_unix: u64) {
+    let (hours, minutes, _) = hms(local_unix);
+    let days = (local_unix / 86_400) as i64;
+    let (year, month, day) = civil_from_days(days);
+    let dow = ((days + 4) % 7) as usize; // 1970-01-01 was a Thursday; 0 = Sunday
+    let cx = Display::WIDTH as i32 / 2;
+
     TIME_FONT
         .render_aligned(
             format_args!("{hours:02}:{minutes:02}"),
-            Point::new(Display::WIDTH as i32 / 2, Display::HEIGHT as i32 / 2),
+            Point::new(cx, 245),
             VerticalPosition::Center,
             HorizontalAlignment::Center,
             FontColor::WithBackground {
@@ -230,6 +258,40 @@ fn draw_time(display: &mut Display, hours: u32, minutes: u32) {
             display,
         )
         .ok();
+    LABEL_FONT
+        .render_aligned(
+            format_args!(
+                "{}, {} {}, {}",
+                DAY_NAMES[dow],
+                MONTH_NAMES[(month - 1) as usize],
+                day,
+                year
+            ),
+            Point::new(cx, 320),
+            VerticalPosition::Center,
+            HorizontalAlignment::Center,
+            FontColor::WithBackground {
+                fg: Gray4::BLACK,
+                bg: Gray4::WHITE,
+            },
+            display,
+        )
+        .ok();
+}
+
+// gregorian (year, month, day) from days since the unix epoch.
+// see http://howardhinnant.github.io/date_algorithms.html#civil_from_days
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    (year + i64::from(month <= 2), month, day)
 }
 
 // query an NTP server over UDP and return the current unix time in seconds.

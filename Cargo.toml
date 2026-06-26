@@ -30,6 +30,7 @@ esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "embassy", "
 embassy-executor = { version = "0.10.0", optional = true }
 embassy-net = { version = "0.9", features = ["dhcpv4", "medium-ethernet", "udp", "dns"], optional = true }
 embassy-time = { version = "0.5", optional = true }
+embassy-futures = { version = "0.1", optional = true }
 static_cell = { version = "2.1", optional = true }
 
 [dev-dependencies]
@@ -46,6 +47,10 @@ tinybmp = { version = "0.6.0" }
 
 [[example]]
 name = "clock"
+required-features = ["wifi"]
+
+[[example]]
+name = "ui"
 required-features = ["wifi"]
 
 [profile.dev]
@@ -74,5 +79,6 @@ wifi = [
     "dep:embassy-executor",
     "dep:embassy-net",
     "dep:embassy-time",
+    "dep:embassy-futures",
     "dep:static_cell",
 ]
