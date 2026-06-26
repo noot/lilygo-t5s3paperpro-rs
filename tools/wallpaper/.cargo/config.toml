@@ -1,0 +1,9 @@
+# build this tool for the host, overriding the esp32 target the repo root
+# .cargo/config.toml applies to everything beneath it.
+#
+# note: the root also sets build.rustflags = link-arg=-nostartfiles, and cargo
+# *joins* build.rustflags across config files, so it leaks in here and produces
+# a host binary that segfaults. it cannot be overridden from a config file, so
+# build via ./convert.sh (or `RUSTFLAGS= cargo run ...`), which clears it.
+[build]
+target = "x86_64-unknown-linux-gnu"

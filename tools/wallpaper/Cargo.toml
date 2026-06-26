@@ -1,0 +1,14 @@
+[package]
+name = "wallpaper-tool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
+
+[profile.release]
+opt-level = 2
+
+# isolate this host tool from the parent embedded crate so it builds with its
+# own toolchain and target rather than the esp32 settings in the repo root.
+[workspace]

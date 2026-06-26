@@ -4,23 +4,40 @@
 extern crate alloc;
 extern crate lilygo_t5s3paperpro;
 
+use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use embedded_graphics::{
+    image::Image,
     mono_font::{
         ascii::{FONT_6X10, FONT_9X15, FONT_9X18_BOLD},
         MonoTextStyle,
     },
     prelude::*,
-    primitives::{PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle},
+    primitives::{Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle},
     text::{Alignment, Text},
 };
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
-use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{display::DisplayRotation, pin_config, Display, DrawMode, FrontLight};
+use esp_hal::{
+    delay::Delay,
+    gpio::{Level, Output, OutputConfig},
+    main,
+    rng::Rng,
+    time::Instant,
+};
+use lilygo_t5s3paperpro::{
+    display::DisplayRotation,
+    pin_config,
+    sdcard_pin_config,
+    Display,
+    DrawMode,
+    FrontLight,
+    SdCard,
+};
 #[cfg(feature = "gps")]
 use lilygo_t5s3paperpro::{gps::Gps, gps_pin_config};
+use tinybmp::Bmp;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -45,6 +62,16 @@ const FL_BTN_W: u32 = 150;
 const FL_BTN_H: u32 = 70;
 const FL_MINUS_X: i32 = 80;
 const FL_PLUS_X: i32 = 310;
+
+const SLEEP_BTN_X: i32 = 160;
+const SLEEP_BTN_Y: i32 = 420;
+const SLEEP_BTN_W: u32 = 220;
+const SLEEP_BTN_H: u32 = 90;
+
+// folder of 540x960 grayscale .bmp wallpapers on the SD card; one is picked at
+// random as the sleep screensaver. this must be a FAT 8.3 name (<=8 chars), as
+// must the .bmp files inside it, so they can be opened by name.
+const WALLPAPER_DIR: &str = "/WALLS";
 
 // loop ticks between GPS readout refreshes (~50ms per tick)
 #[cfg(feature = "gps")]
@@ -115,6 +142,35 @@ enum Screen {
     Sleep,
 }
 
+impl Screen {
+    fn to_index(self) -> u8 {
+        match self {
+            Screen::Home => 0,
+            Screen::Gps => 1,
+            Screen::Lora => 2,
+            Screen::Frontlight => 3,
+            Screen::Sleep => 4,
+        }
+    }
+
+    // map a stored index back to a screen. the Sleep screen and any
+    // unexpected value fall back to Home, so waking never lands on the sleep
+    // menu or on garbage left by an interrupted persistent write.
+    fn from_index(value: u8) -> Self {
+        match value {
+            1 => Screen::Gps,
+            2 => Screen::Lora,
+            3 => Screen::Frontlight,
+            _ => Screen::Home,
+        }
+    }
+}
+
+// last visited screen, stored in RTC fast memory so it survives the reset that
+// deep sleep performs. zeroed (Home) on first boot, then retained across sleep.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut LAST_SCREEN: u8 = 0;
+
 struct Icon {
     label: &'static str,
     glyph: &'static str,
@@ -179,6 +235,11 @@ fn minus_hit(sx: i32, sy: i32) -> bool {
 fn plus_hit(sx: i32, sy: i32) -> bool {
     (FL_PLUS_X..FL_PLUS_X + FL_BTN_W as i32).contains(&sx)
         && (FL_BTN_Y..FL_BTN_Y + FL_BTN_H as i32).contains(&sy)
+}
+
+fn sleep_now_hit(sx: i32, sy: i32) -> bool {
+    (SLEEP_BTN_X..SLEEP_BTN_X + SLEEP_BTN_W as i32).contains(&sx)
+        && (SLEEP_BTN_Y..SLEEP_BTN_Y + SLEEP_BTN_H as i32).contains(&sy)
 }
 
 // ── drawing: status bar ─────────────────────────────────────────────
@@ -559,7 +620,7 @@ fn draw_lora_screen(display: &mut Display) {
 // ── drawing: sleep ──────────────────────────────────────────────────
 fn draw_sleep_screen(display: &mut Display) {
     let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
-    let small = MonoTextStyle::new(&FONT_6X10, Gray4::new(4));
+    let small = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
     draw_back_button(display);
 
     Text::with_alignment(
@@ -571,21 +632,176 @@ fn draw_sleep_screen(display: &mut Display) {
     .draw(display)
     .ok();
     Text::with_alignment(
-        "Press HOME button",
-        Point::new(SCREEN_W / 2, 380),
+        "Sleep to save power.",
+        Point::new(SCREEN_W / 2, 300),
         small,
         Alignment::Center,
     )
     .draw(display)
     .ok();
     Text::with_alignment(
-        "to enter deep sleep",
-        Point::new(SCREEN_W / 2, 400),
+        "Wake with the BOOT button.",
+        Point::new(SCREEN_W / 2, 330),
         small,
         Alignment::Center,
     )
     .draw(display)
     .ok();
+
+    let btn_border = PrimitiveStyleBuilder::new()
+        .stroke_color(Gray4::BLACK)
+        .stroke_width(3)
+        .fill_color(Gray4::WHITE)
+        .build();
+    RoundedRectangle::with_equal_corners(
+        Rectangle::new(
+            Point::new(SLEEP_BTN_X, SLEEP_BTN_Y),
+            Size::new(SLEEP_BTN_W, SLEEP_BTN_H),
+        ),
+        Size::new(12, 12),
+    )
+    .into_styled(btn_border)
+    .draw(display)
+    .ok();
+    Text::with_alignment(
+        "Sleep Now",
+        Point::new(
+            SLEEP_BTN_X + SLEEP_BTN_W as i32 / 2,
+            SLEEP_BTN_Y + SLEEP_BTN_H as i32 / 2 + 6,
+        ),
+        bold,
+        Alignment::Center,
+    )
+    .draw(display)
+    .ok();
+}
+
+// ── drawing: screensaver (shown while in deep sleep) ─────────────────
+fn draw_screensaver(display: &mut Display, pct: u16) {
+    let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
+    let small = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
+
+    let cx = SCREEN_W / 2;
+    let cy = 350;
+    let r = 90;
+
+    // crescent moon: a black disc with an offset white disc carving it
+    Circle::new(Point::new(cx - r, cy - r), (r * 2) as u32)
+        .into_styled(PrimitiveStyle::with_fill(Gray4::BLACK))
+        .draw(display)
+        .ok();
+    Circle::new(Point::new(cx - r + 40, cy - r - 30), (r * 2) as u32)
+        .into_styled(PrimitiveStyle::with_fill(Gray4::WHITE))
+        .draw(display)
+        .ok();
+
+    // a scattering of stars
+    for (star_x, star_y, star_r) in [
+        (150, 230, 5u32),
+        (415, 300, 7),
+        (385, 470, 4),
+        (165, 500, 5),
+    ] {
+        Circle::new(
+            Point::new(star_x - star_r as i32, star_y - star_r as i32),
+            star_r * 2,
+        )
+        .into_styled(PrimitiveStyle::with_fill(Gray4::BLACK))
+        .draw(display)
+        .ok();
+    }
+
+    Text::with_alignment("Sleeping", Point::new(cx, 580), bold, Alignment::Center)
+        .draw(display)
+        .ok();
+    Text::with_alignment(
+        "Press the BOOT button to wake",
+        Point::new(cx, 630),
+        small,
+        Alignment::Center,
+    )
+    .draw(display)
+    .ok();
+
+    let mut buf = FmtBuf::<24>::new();
+    write!(buf, "Battery {}%", pct.min(100)).ok();
+    Text::with_alignment(buf.as_str(), Point::new(cx, 700), small, Alignment::Center)
+        .draw(display)
+        .ok();
+}
+
+// load the wallpaper bitmap from the SD card and draw it full-screen. returns
+// false if the card, file, or bitmap is missing or unreadable so the caller can
+// fall back to the drawn screensaver.
+fn show_wallpaper<'d>(
+    display: &mut Display,
+    spi: esp_hal::peripherals::SPI2<'d>,
+    pins: lilygo_t5s3paperpro::sdcard::PinConfig<'d>,
+    lora_cs: esp_hal::peripherals::GPIO46<'d>,
+) -> bool {
+    // the SD card shares the SPI bus (sclk/mosi/miso) with the LoRa SX1262
+    // radio. drive the radio's chip-select high so it releases MISO; otherwise
+    // it corrupts SD init and the card comes back as CardNotFound. held for the
+    // duration of the SD access below.
+    let _lora_cs = Output::new(lora_cs, Level::High, OutputConfig::default());
+
+    let sdcard = match SdCard::new(pins, spi) {
+        Ok(sdcard) => sdcard,
+        Err(e) => {
+            esp_println::println!("wallpaper: sd init failed: {e:?}");
+            return false;
+        }
+    };
+    let entries = match sdcard.list_dir(WALLPAPER_DIR) {
+        Ok(entries) => entries,
+        Err(e) => {
+            esp_println::println!("wallpaper: list_dir {WALLPAPER_DIR} failed: {e:?}");
+            return false;
+        }
+    };
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        if !entry.is_directory && is_bmp(&entry.name) {
+            paths.push(entry.path);
+        }
+    }
+    if paths.is_empty() {
+        esp_println::println!("wallpaper: no .bmp files in {WALLPAPER_DIR}");
+        return false;
+    }
+
+    // mix the hardware RNG with a microsecond timer reading. with the radios
+    // off the RNG alone is biased (it kept picking the same file); the instant
+    // at which sleep is triggered adds real entropy. then fall through the rest
+    // so an unreadable file (e.g. a long name the FAT layer can't open by its
+    // 8.3 short name) is skipped rather than aborting.
+    let seed = Rng::new().random() ^ Instant::now().duration_since_epoch().as_micros() as u32;
+    let start = seed as usize % paths.len();
+    for offset in 0..paths.len() {
+        let path = &paths[(start + offset) % paths.len()];
+        let bytes = match sdcard.read_file(path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                esp_println::println!("wallpaper: read {path} failed: {e:?}");
+                continue;
+            }
+        };
+        let Ok(bmp) = Bmp::<Gray4>::from_slice(&bytes) else {
+            esp_println::println!("wallpaper: parse {path} failed");
+            continue;
+        };
+        if Image::new(&bmp, Point::zero()).draw(display).is_ok() {
+            esp_println::println!("wallpaper: drew {path}");
+            return true;
+        }
+    }
+    false
+}
+
+fn is_bmp(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("bmp"))
 }
 
 // ── main ────────────────────────────────────────────────────────────
@@ -651,7 +867,14 @@ fn main() -> ! {
         }
     }
 
-    let mut current_screen = Screen::Home;
+    // restore the screen we slept on. only trust the stored value when we
+    // actually woke from deep sleep; any other reset starts at Home. reading
+    // the RTC-backed static is sound here as the UI is single-threaded.
+    let mut current_screen = if lilygo_t5s3paperpro::power::wake_status().woke_from_deep_sleep() {
+        Screen::from_index(unsafe { LAST_SCREEN })
+    } else {
+        Screen::Home
+    };
     let mut needs_redraw = true;
     let mut brightness: u8 = 0;
 
@@ -731,6 +954,12 @@ fn main() -> ! {
             needs_redraw = true;
         }
 
+        // the auxiliary button sleeps from any screen; the current screen is
+        // restored on wake.
+        if input.buttons.auxiliary {
+            break;
+        }
+
         if let Some(state) = input.touch {
             if let Some(point) = state.first_point() {
                 let (sx, sy) = touch_to_screen(point.x, point.y);
@@ -756,6 +985,16 @@ fn main() -> ! {
                             light.set_brightness(brightness);
                             draw_brightness_area(&mut display, brightness);
                             display.flush_partial_fast(brightness_native_rect()).ok();
+                        }
+                    }
+                    Screen::Sleep => {
+                        if back_button_hit(sx, sy) {
+                            current_screen = Screen::Home;
+                            needs_redraw = true;
+                        } else if sleep_now_hit(sx, sy) {
+                            // leave the loop to draw the screensaver and enter
+                            // deep sleep below
+                            break;
                         }
                     }
                     _ => {
@@ -790,4 +1029,29 @@ fn main() -> ! {
 
         delay.delay_millis(50);
     }
+
+    // sleep was requested from the Sleep screen. turn the front light off,
+    // paint the screensaver (e-ink retains it with the panel unpowered), then
+    // enter deep sleep. the boot button wakes the chip, which resets and
+    // re-runs main() from the top.
+    light.set_brightness(0);
+    // remember where we were so wake lands on the same screen. single-threaded,
+    // so writing the RTC-backed static is sound.
+    unsafe {
+        LAST_SCREEN = current_screen.to_index();
+    }
+    display.clear().ok();
+    // pick a random wallpaper from the SD card; fall back to the drawn
+    // screensaver if the folder is missing or has no usable .bmp files.
+    if !show_wallpaper(
+        &mut display,
+        peripherals.SPI2,
+        sdcard_pin_config!(peripherals),
+        peripherals.GPIO46,
+    ) {
+        let pct = display.battery_percentage().unwrap_or(0);
+        draw_screensaver(&mut display, pct);
+    }
+    display.flush(DrawMode::BlackOnWhite).expect("to flush");
+    display.deep_sleep(peripherals.LPWR, None)
 }
