@@ -60,7 +60,6 @@ fn main() -> ! {
     let now_us = clock.now_us();
     let (year, month, day, hour, minute, second) = format_uk_datetime(now_us / 1_000_000);
     let uptime = clock.uptime();
-    let xtal_mhz = clock.estimate_xtal_frequency_mhz();
 
     let mut display = Display::new(
         pin_config!(peripherals),
@@ -79,7 +78,7 @@ fn main() -> ! {
 
     FONT.render_aligned(
         format_args!(
-            "RTC: {:02}/{:02}/{:04} {:02}:{:02}:{:02}\nRaw: {} us\nUptime: {} ms\nXTAL: {} MHz\nReset: {:?}\nWake: {:?}\nSleeping for 30s",
+            "RTC: {:02}/{:02}/{:04} {:02}:{:02}:{:02}\nRaw: {} us\nUptime: {} ms\nReset: {:?}\nWake: {:?}\nSleeping for 30s",
             day,
             month,
             year,
@@ -88,7 +87,6 @@ fn main() -> ! {
             second,
             now_us,
             uptime.as_millis(),
-            xtal_mhz,
             wake.reset_reason,
             wake.wakeup_cause,
         ),

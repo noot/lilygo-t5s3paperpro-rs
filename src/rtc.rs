@@ -39,12 +39,7 @@ impl<'d> Clock<'d> {
 
     /// Return the time since boot.
     pub fn uptime(&mut self) -> Duration {
-        Duration::from_micros(self.rtc().time_since_boot().as_micros())
-    }
-
-    /// Return the estimated XTAL frequency in MHz.
-    pub fn estimate_xtal_frequency_mhz(&mut self) -> u32 {
-        self.rtc().estimate_xtal_frequency()
+        Duration::from_micros(self.rtc().time_since_power_up().as_micros())
     }
 
     /// Return the owned LPWR peripheral for use by other low-power APIs.

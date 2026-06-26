@@ -811,7 +811,16 @@ fn main() -> ! {
 
     let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    // esp-hal 1.1 dropped the ESP_HAL_CONFIG_PSRAM_MODE build option; the panel
+    // has octal PSRAM, so request it explicitly (Default would auto-detect).
+    esp_alloc::psram_allocator!(
+        peripherals.PSRAM,
+        esp_hal::psram,
+        esp_hal::psram::PsramConfig {
+            mode: esp_hal::psram::PsramMode::OctalSpi,
+            ..Default::default()
+        }
+    );
 
     let mut display = Display::new(
         pin_config!(peripherals),

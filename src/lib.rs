@@ -124,6 +124,8 @@ pub enum Error {
     /// Pass-through
     Rmt(esp_hal::rmt::Error),
     /// Pass-through
+    RmtConfig(esp_hal::rmt::ConfigError),
+    /// Pass-through
     Dma(esp_hal::dma::DmaError),
     /// Pass-through
     DmaBuffer(esp_hal::dma::DmaBufError),
@@ -157,6 +159,7 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Rmt(e) => write!(f, "RMT error: {e:?}"),
+            Self::RmtConfig(e) => write!(f, "RMT configuration error: {e:?}"),
             Self::Dma(e) => write!(f, "DMA error: {e:?}"),
             Self::DmaBuffer(e) => write!(f, "DMA buffer error: {e:?}"),
             Self::I2c(e) => write!(f, "I2C error: {e:?}"),
