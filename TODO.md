@@ -14,12 +14,13 @@ hardware reference: [T5S3-4.7-e-paper-PRO](https://github.com/Xinyuan-LilyGO/T5S
 - [ ] **SPI bus arbitration** — LoRa CS must be held high during SD card access (shared bus)
 - [ ] **BQ25896 full driver** — charge current config, charge status, input power path management (currently shutdown only)
 - [ ] **BQ27220 full driver** — current draw, temperature, state of health, remaining/full capacity (currently voltage + SOC only)
+- [ ] sd card file browser in UI
+- [ ] LoRa user message (with keyboard) and broadcast
 
 ## low priority / nice to have
 
 - [x] **WiFi** — via `esp-wifi` crate
 - [ ] **BLE** — via `esp-wifi` crate
 - [ ] **waveform LUT temperature compensation** — use TPS65185 temp sensor to select waveform table at draw time
-- [ ] sd card file browser in UI
 - [ ] open bmp images in file browser
 - [ ] epub reader functionality

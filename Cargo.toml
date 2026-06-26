@@ -51,7 +51,7 @@ required-features = ["wifi"]
 
 [[example]]
 name = "ui"
-required-features = ["wifi"]
+required-features = ["wifi", "lora"]
 
 [profile.dev]
 # Rust debug is too slow.
