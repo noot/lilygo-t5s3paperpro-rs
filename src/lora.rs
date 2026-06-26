@@ -292,6 +292,46 @@ impl<'d> Lora<'d> {
         }
     }
 
+    /// Put the radio into continuous receive mode without blocking, then call
+    /// [`Lora::poll_receive`] repeatedly to collect packets as they arrive.
+    pub fn start_receive(&mut self) -> Result<(), Error> {
+        self.set_standby()?;
+        self.set_packet_params(MAX_PAYLOAD as u8)?;
+        self.clear_irq_status(IRQ_ALL)?;
+        self.set_rx_continuous()
+    }
+
+    /// Non-blocking check for a received packet while in continuous receive
+    /// mode (see [`Lora::start_receive`]).
+    ///
+    /// Returns `Ok(Some(n))` with the payload length when a packet has arrived
+    /// since the last call, or `Ok(None)` if none is ready or one failed its
+    /// CRC. The radio keeps listening either way, so this can be polled from a
+    /// main loop. RSSI and SNR are then available via [`Lora::rssi`]/
+    /// [`Lora::snr`].
+    pub fn poll_receive(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        if self.dio1.is_low() {
+            return Ok(None);
+        }
+        let irq = self.irq_status()?;
+        self.clear_irq_status(IRQ_ALL)?;
+        if irq & IRQ_RX_DONE == 0 || irq & IRQ_CRC_ERR != 0 {
+            return Ok(None);
+        }
+        let (length, start) = self.rx_buffer_status()?;
+        let n = (length as usize).min(buf.len());
+        self.read_buffer(start, &mut buf[..n])?;
+        (self.last_rssi_dbm, self.last_snr_db) = self.packet_status()?;
+        Ok(Some(n))
+    }
+
+    /// Put the radio into a low-power standby state when receive mode is no
+    /// longer needed. It returns to service via [`Lora::transmit`] or
+    /// [`Lora::start_receive`].
+    pub fn standby(&mut self) -> Result<(), Error> {
+        self.set_standby()
+    }
+
     /// RSSI of the most recently received packet, in dBm.
     pub fn rssi(&self) -> i16 {
         self.last_rssi_dbm

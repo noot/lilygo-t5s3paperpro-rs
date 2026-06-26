@@ -6,11 +6,11 @@ clock:
     touch examples/clock.rs
     SSID="$SSID" PASSWORD="$PASSWORD" TZ_OFFSET_HOURS="$TZ_OFFSET_HOURS" cargo run --example clock --features wifi
 
-# flash the touchscreen ui (gps + wifi status-bar clock; creds/tz from .env)
+# flash the touchscreen ui (gps + lora keyboard + wifi status-bar clock; creds/tz from .env)
 ui:
     # re-touch so the env-baked credentials pick up any .env changes
     touch examples/ui.rs
-    SSID="$SSID" PASSWORD="$PASSWORD" TZ_OFFSET_HOURS="$TZ_OFFSET_HOURS" cargo run --example ui --features gps,wifi
+    SSID="$SSID" PASSWORD="$PASSWORD" TZ_OFFSET_HOURS="$TZ_OFFSET_HOURS" cargo run --example ui --features gps,wifi,lora
 
 # check that everything compiles
 check:
