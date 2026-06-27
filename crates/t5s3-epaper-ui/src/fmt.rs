@@ -12,7 +12,7 @@ impl<const N: usize> FmtBuf<N> {
         }
     }
 
-    #[cfg_attr(not(feature = "gps"), allow(dead_code))]
+    #[cfg(feature = "gps")]
     pub(crate) fn reset(&mut self) {
         self.pos = 0;
     }
