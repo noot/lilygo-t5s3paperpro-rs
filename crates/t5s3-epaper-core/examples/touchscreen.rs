@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use embedded_graphics::{
     prelude::*,
@@ -11,7 +11,7 @@ use embedded_graphics::{
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{display::Rectangle, pin_config, Display};
+use t5s3_epaper_core::{display::Rectangle, pin_config, Display};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

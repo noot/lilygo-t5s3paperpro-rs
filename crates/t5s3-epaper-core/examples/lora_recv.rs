@@ -2,16 +2,15 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
-use alloc::format;
 use core::format_args;
 
 use embedded_graphics::prelude::*;
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{
+use t5s3_epaper_core::{
     display::Rectangle,
     lora::{Config, Lora},
     lora_pin_config,
@@ -65,39 +64,38 @@ fn main() -> ! {
         height: 200,
     };
 
-    let mut counter: u32 = 0;
+    let mut buf = [0u8; 64];
+    let mut count: u32 = 0;
     loop {
-        let payload = format!("ping {counter}");
-        let result = radio.transmit(payload.as_bytes());
-        match &result {
-            Ok(()) => esp_println::println!("lora tx: {}", payload),
-            Err(e) => esp_println::println!("lora tx error: {}", e),
+        match radio.receive(&mut buf, 5000) {
+            Ok(Some(len)) => {
+                count = count.wrapping_add(1);
+                let text = core::str::from_utf8(&buf[..len]).unwrap_or("<binary>");
+                let rssi = radio.rssi();
+                let snr = radio.snr();
+                esp_println::println!("lora rx: {} (rssi {} dBm, snr {} dB)", text, rssi, snr);
+
+                FONT.render_aligned(
+                    format_args!(
+                        "LoRa RX @ 915 MHz\n\nrecv:  {}\nrssi:  {} dBm\nsnr:   {} dB\ncount: {}",
+                        text, rssi, snr, count
+                    ),
+                    Point::new(60, 100),
+                    u8g2_fonts::types::VerticalPosition::Baseline,
+                    u8g2_fonts::types::HorizontalAlignment::Left,
+                    u8g2_fonts::types::FontColor::WithBackground {
+                        fg: Gray4::BLACK,
+                        bg: Gray4::WHITE,
+                    },
+                    &mut display,
+                )
+                .expect("to render rx data");
+                display
+                    .flush_partial_fast(text_area)
+                    .expect("to flush rx data");
+            }
+            Ok(None) => esp_println::println!("lora rx: listening..."),
+            Err(e) => esp_println::println!("lora rx error: {}", e),
         }
-
-        let status = match result {
-            Ok(()) => "sent",
-            Err(_) => "ERROR",
-        };
-        FONT.render_aligned(
-            format_args!(
-                "LoRa TX @ 915 MHz\n\nstatus: {}\ncount:  {}\nlast:   {}",
-                status, counter, payload
-            ),
-            Point::new(60, 100),
-            u8g2_fonts::types::VerticalPosition::Baseline,
-            u8g2_fonts::types::HorizontalAlignment::Left,
-            u8g2_fonts::types::FontColor::WithBackground {
-                fg: Gray4::BLACK,
-                bg: Gray4::WHITE,
-            },
-            &mut display,
-        )
-        .expect("to render tx status");
-        display
-            .flush_partial_fast(text_area)
-            .expect("to flush tx status");
-
-        counter = counter.wrapping_add(1);
-        delay.delay_millis(2000);
     }
 }

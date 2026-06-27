@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use core::format_args;
 
@@ -10,10 +10,10 @@ use embedded_graphics::prelude::*;
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{display::Rectangle, pin_config, Display};
+use t5s3_epaper_core::{display::Rectangle, pin_config, Display};
 use u8g2_fonts::FontRenderer;
 
-static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_mr>();
+static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mr>();
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -25,6 +25,7 @@ fn main() -> ! {
     let config = config.with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
+    // Create PSRAM allocator
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let mut display = Display::new(
@@ -42,36 +43,22 @@ fn main() -> ! {
     delay.delay_millis(10);
     display.clear().expect("to clear screen");
 
-    let text_origin = Point::new(60, 180);
+    let text_origin = Point::new(60, display.bounding_box().center().y);
     let text_area = Rectangle {
         x: 40,
-        y: 120,
-        width: 880,
-        height: 280,
+        y: (display.bounding_box().center().y - 56) as u16,
+        width: display.bounding_box().size.width as u16 - 80,
+        height: 112,
     };
 
     loop {
-        let input = display.input().expect("to read input state");
+        let voltage = display.battery_voltage().expect("to read battery voltage");
+        let percent = display
+            .battery_percentage()
+            .expect("to read battery percentage");
 
         FONT.render_aligned(
-            format_args!(
-                "Home: {}\nAux:  {}\nBoot: {}",
-                if input.buttons.home {
-                    "pressed "
-                } else {
-                    "released"
-                },
-                if input.buttons.auxiliary {
-                    "pressed "
-                } else {
-                    "released"
-                },
-                if input.buttons.boot {
-                    "pressed "
-                } else {
-                    "released"
-                }
-            ),
+            format_args!("Battery: {:>5.3}V {:>3}%", voltage, percent),
             text_origin,
             u8g2_fonts::types::VerticalPosition::Baseline,
             u8g2_fonts::types::HorizontalAlignment::Left,
@@ -81,12 +68,11 @@ fn main() -> ! {
             },
             &mut display,
         )
-        .expect("to render input status");
+        .expect("to render font in the framebuffer");
 
         display
             .flush_partial_fast(text_area)
-            .expect("to flush input status");
-
-        delay.delay_millis(100);
+            .expect("to flush to display");
+        delay.delay_millis(5000);
     }
 }

@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use core::format_args;
 
@@ -10,7 +10,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{display::Rectangle, pin_config, Display};
+use t5s3_epaper_core::{display::Rectangle, pin_config, Display};
 use u8g2_fonts::FontRenderer;
 
 static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mr>();
@@ -25,7 +25,6 @@ fn main() -> ! {
     let config = config.with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
-    // Create PSRAM allocator
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let mut display = Display::new(
@@ -52,13 +51,12 @@ fn main() -> ! {
     };
 
     loop {
-        let voltage = display.battery_voltage().expect("to read battery voltage");
-        let percent = display
-            .battery_percentage()
-            .expect("to read battery percentage");
+        let temp = display
+            .panel_temperature()
+            .expect("to read panel temperature");
 
         FONT.render_aligned(
-            format_args!("Battery: {:>5.3}V {:>3}%", voltage, percent),
+            format_args!("Panel temp: {:>3} C", temp),
             text_origin,
             u8g2_fonts::types::VerticalPosition::Baseline,
             u8g2_fonts::types::HorizontalAlignment::Left,

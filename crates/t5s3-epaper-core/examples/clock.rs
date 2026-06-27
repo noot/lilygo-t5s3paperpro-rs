@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use embassy_executor::Spawner;
 use embassy_net::{
@@ -25,7 +25,7 @@ use esp_hal::{
 };
 use esp_println::println;
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
-use lilygo_t5s3paperpro::{display::Rectangle, pin_config, Clock, Display, DrawMode};
+use t5s3_epaper_core::{display::Rectangle, pin_config, Clock, Display, DrawMode};
 use static_cell::StaticCell;
 use u8g2_fonts::{
     fonts,

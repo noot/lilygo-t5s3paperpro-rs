@@ -3,11 +3,11 @@
 
 // Adapted from https://github.com/Xinyuan-LilyGO/LilyGo-EPD47/blob/master/examples/screen_repair/screen_repair.ino
 
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{pin_config, Display};
+use t5s3_epaper_core::{pin_config, Display};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

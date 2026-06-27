@@ -1,0 +1,75 @@
+[package]
+name = "t5s3-epaper-core"
+description = "Simple driver for the LilyGo T5 S3 ePaper Pro family on ESP32-S3"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+categories = ["embedded", "no-std"]
+keywords = ["epd", "lilygo", "esp-hal", "ED047TC1", "embedded-graphics"]
+
+[dependencies]
+critical-section = { workspace = true }
+nb = { workspace = true }
+esp-hal = { workspace = true }
+embedded-graphics-core = { workspace = true, optional = true }
+esp-alloc = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+log = { workspace = true }
+embedded-hal = { workspace = true }
+embedded-hal-bus = { workspace = true }
+embedded-sdmmc = { workspace = true }
+nmea = { workspace = true, optional = true }
+
+esp-radio = { workspace = true, optional = true }
+esp-rtos = { workspace = true, optional = true }
+embassy-executor = { workspace = true, optional = true }
+embassy-net = { workspace = true, optional = true }
+embassy-time = { workspace = true, optional = true }
+embassy-futures = { workspace = true, optional = true }
+static_cell = { workspace = true, optional = true }
+
+[dev-dependencies]
+esp-println = { workspace = true }
+esp-backtrace = { workspace = true }
+u8g2-fonts = { workspace = true }
+embedded-graphics = { workspace = true }
+tinybmp = { workspace = true }
+
+[[example]]
+name = "clock"
+required-features = ["wifi"]
+
+[[example]]
+name = "gps"
+required-features = ["gps"]
+
+[[example]]
+name = "lora"
+required-features = ["lora"]
+
+[[example]]
+name = "lora_send"
+required-features = ["lora"]
+
+[[example]]
+name = "lora_recv"
+required-features = ["lora"]
+
+[features]
+default = ["embedded-graphics"]
+
+embedded-graphics = ["embedded-graphics-core"]
+gps = ["nmea"]
+lora = []
+wifi = [
+    "dep:esp-radio",
+    "dep:esp-rtos",
+    "dep:embassy-executor",
+    "dep:embassy-net",
+    "dep:embassy-time",
+    "dep:embassy-futures",
+    "dep:static_cell",
+]

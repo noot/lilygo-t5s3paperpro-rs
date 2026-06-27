@@ -1,0 +1,35 @@
+[package]
+name = "t5s3-epaper-ui"
+description = "Touchscreen UI firmware for the LilyGo T5 S3 ePaper Pro"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "t5s3-epaper-ui"
+path = "src/main.rs"
+
+[dependencies]
+t5s3-epaper-core = { workspace = true, features = ["wifi", "lora"] }
+esp-hal = { workspace = true }
+esp-alloc = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+esp-radio = { workspace = true }
+esp-rtos = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-net = { workspace = true }
+embassy-time = { workspace = true }
+embassy-futures = { workspace = true }
+embedded-graphics = { workspace = true }
+embedded-graphics-core = { workspace = true }
+esp-backtrace = { workspace = true }
+esp-println = { workspace = true }
+tinybmp = { workspace = true }
+nmea = { workspace = true, optional = true }
+
+[features]
+default = []
+gps = ["t5s3-epaper-core/gps", "dep:nmea"]

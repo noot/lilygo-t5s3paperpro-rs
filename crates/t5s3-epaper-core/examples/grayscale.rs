@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use embedded_graphics::{prelude::*, primitives::PrimitiveStyleBuilder};
 use embedded_graphics_core::{
@@ -13,7 +13,7 @@ use embedded_graphics_core::{
 #[allow(unused_imports)]
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use lilygo_t5s3paperpro::{pin_config, Display, DrawMode};
+use t5s3_epaper_core::{pin_config, Display, DrawMode};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

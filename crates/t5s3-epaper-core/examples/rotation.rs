@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use embedded_graphics::{
     image::Image,
@@ -21,7 +21,7 @@ use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
 use esp_println::println;
-use lilygo_t5s3paperpro::{display::DisplayRotation, pin_config, Display, DrawMode};
+use t5s3_epaper_core::{display::DisplayRotation, pin_config, Display, DrawMode};
 use tinybmp::Bmp;
 use u8g2_fonts::U8g2TextStyle;
 

@@ -1,57 +1,43 @@
-[package]
-name = "lilygo-t5s3paperpro"
-description = "Simple driver for the LilyGo T5 S3 ePaper Pro family on ESP32-S3"
+[workspace]
+resolver = "2"
+members = ["crates/t5s3-epaper-core", "crates/t5s3-epaper-ui"]
+exclude = ["tools/wallpaper"]
+
+[workspace.package]
 version = "1.1.0"
-authors = ["Andrew Whaley <andrew@whaley.org.uk", "Frido Koch <info@fridokoch.de>"]
 edition = "2021"
 license = "GPL-3.0"
-categories = ["embedded", "no-std"]
-readme = "./README.md"
+authors = ["Andrew Whaley <andrew@whaley.org.uk", "Frido Koch <info@fridokoch.de>"]
 repository = "https://github.com/azw413/lilygo-t5s3paperpro-rs"
-keywords = ["epd", "lilygo", "esp-hal", "ED047TC1", "embedded-graphics"]
 
-[dependencies]
+[workspace.dependencies]
 critical-section = "1.2.0"
 nb = "1"
-esp-hal = { version = "1.1.1", features = ["esp32s3","unstable"] }
-embedded-graphics-core = { version = "0.4.0", optional = true }
+esp-hal = { version = "1.1.1", features = ["esp32s3", "unstable"] }
+embedded-graphics-core = "0.4.0"
 esp-alloc = "0.10.0"
 esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
-log = { version = "0.4.28" }
+log = "0.4.28"
 embedded-hal = "1.0.0"
 embedded-hal-bus = "0.3.0"
 embedded-sdmmc = { version = "0.9.0", default-features = false, features = ["log"] }
-nmea = { version = "0.7", default-features = false, features = ["GNSS", "other"], optional = true }
+nmea = { version = "0.7", default-features = false, features = ["GNSS", "other"] }
 
-# wifi stack (optional; used by the clock example). matches the proven versions
-# from the waveshare-epaper project, retargeted to the esp32s3.
-esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "wifi", "log-04"], optional = true }
-esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "embassy", "log-04"], optional = true }
-embassy-executor = { version = "0.10.0", optional = true }
-embassy-net = { version = "0.9", features = ["dhcpv4", "medium-ethernet", "udp", "dns"], optional = true }
-embassy-time = { version = "0.5", optional = true }
-embassy-futures = { version = "0.1", optional = true }
-static_cell = { version = "2.1", optional = true }
+esp-radio = { version = "1.0.0-beta.0", features = ["esp32s3", "wifi", "log-04"] }
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "embassy", "log-04"] }
+embassy-executor = "0.10.0"
+embassy-net = { version = "0.9", features = ["dhcpv4", "medium-ethernet", "udp", "dns"] }
+embassy-time = "0.5"
+embassy-futures = "0.1"
+static_cell = "2.1"
 
-[dev-dependencies]
 esp-println = { version = "0.17.0", features = ["esp32s3", "log-04"] }
-esp-backtrace = { version = "0.19.0", features = [
-    "esp32s3",
-    "panic-handler",
-    "println",
-] }
+esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }
 u8g2-fonts = { version = "0.7.2", features = ["embedded_graphics_textstyle"] }
 embedded-graphics = "0.8.1"
+tinybmp = "0.6.0"
 
-tinybmp = { version = "0.6.0" }
-
-[[example]]
-name = "clock"
-required-features = ["wifi"]
-
-[[example]]
-name = "ui"
-required-features = ["wifi", "lora"]
+t5s3-epaper-core = { path = "crates/t5s3-epaper-core" }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -66,19 +52,3 @@ incremental = false
 lto = 'fat'
 opt-level = 's'
 overflow-checks = false
-
-[features]
-default = ["embedded-graphics"]
-
-embedded-graphics = ["embedded-graphics-core"]
-gps = ["nmea"]
-lora = []
-wifi = [
-    "dep:esp-radio",
-    "dep:esp-rtos",
-    "dep:embassy-executor",
-    "dep:embassy-net",
-    "dep:embassy-time",
-    "dep:embassy-futures",
-    "dep:static_cell",
-]

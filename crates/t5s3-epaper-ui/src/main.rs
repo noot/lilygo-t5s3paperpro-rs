@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write as _;
@@ -38,7 +38,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
-use lilygo_t5s3paperpro::{
+use t5s3_epaper_core::{
     display::DisplayRotation,
     lora::{Config as LoraConfig, Lora},
     pin_config,
@@ -50,7 +50,7 @@ use lilygo_t5s3paperpro::{
     SdCard,
 };
 #[cfg(feature = "gps")]
-use lilygo_t5s3paperpro::{gps::Gps, gps_pin_config};
+use t5s3_epaper_core::{gps::Gps, gps_pin_config};
 use tinybmp::Bmp;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -153,8 +153,8 @@ fn screen_to_native_rect(
     sy: i32,
     sw: i32,
     sh: i32,
-) -> lilygo_t5s3paperpro::display::Rectangle {
-    lilygo_t5s3paperpro::display::Rectangle {
+) -> t5s3_epaper_core::display::Rectangle {
+    t5s3_epaper_core::display::Rectangle {
         x: sy as u16,
         y: (Display::HEIGHT as i32 - sx - sw) as u16,
         width: sh as u16,
@@ -368,7 +368,7 @@ fn draw_statusbar_time(display: &mut Display, time: Option<(u32, u32)>) {
         .ok();
 }
 
-fn statusbar_time_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn statusbar_time_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(215, 18, 110, 30)
 }
 
@@ -636,7 +636,7 @@ fn draw_brightness_area(display: &mut Display, brightness: u8) {
     }
 }
 
-fn brightness_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn brightness_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(40, 290, 460, 160)
 }
 
@@ -687,8 +687,8 @@ fn draw_gps_data(display: &mut Display, gps: &Gps<'_>, last_fix: Option<GpsFix>)
         .ok();
 
     let module_name = match gps.module() {
-        lilygo_t5s3paperpro::gps::Module::L76K => "L76K",
-        lilygo_t5s3paperpro::gps::Module::MiaM10Q => "MIA-M10Q",
+        t5s3_epaper_core::gps::Module::L76K => "L76K",
+        t5s3_epaper_core::gps::Module::MiaM10Q => "MIA-M10Q",
     };
 
     let in_view = gps.satellites_in_view();
@@ -800,7 +800,7 @@ fn draw_gps_data(display: &mut Display, gps: &Gps<'_>, last_fix: Option<GpsFix>)
 }
 
 #[cfg(feature = "gps")]
-fn gps_data_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn gps_data_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(30, 170, 480, 300)
 }
 
@@ -1118,23 +1118,23 @@ fn draw_lora_screen(
     draw_keyboard(display, symbols, shift);
 }
 
-fn message_box_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn message_box_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(MSG_X, MSG_Y, MSG_W as i32, MSG_H as i32)
 }
 
-fn lora_status_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn lora_status_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(MSG_X, LORA_STATUS_Y, MSG_W as i32, 26)
 }
 
-fn sent_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn sent_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(MSG_X, SENT_Y, MSG_W as i32, LIST_H as i32)
 }
 
-fn received_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn received_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(MSG_X, RECV_Y, MSG_W as i32, LIST_H as i32)
 }
 
-fn keyboard_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
+fn keyboard_native_rect() -> t5s3_epaper_core::display::Rectangle {
     screen_to_native_rect(0, KB_TOP - 6, SCREEN_W, 4 * (KB_KEY_H + KB_GAP_Y) + 12)
 }
 
@@ -1143,8 +1143,8 @@ fn keyboard_native_rect() -> lilygo_t5s3paperpro::display::Rectangle {
 // free while this page is open. steal the bus + radio pins (mirroring the wifi
 // re-sync); dropping the returned radio releases them. the 3.3v rail powered up
 // at boot, so no settle delay is needed.
-fn make_radio() -> Result<Lora<'static>, lilygo_t5s3paperpro::lora::Error> {
-    let pins = lilygo_t5s3paperpro::lora::PinConfig {
+fn make_radio() -> Result<Lora<'static>, t5s3_epaper_core::lora::Error> {
+    let pins = t5s3_epaper_core::lora::PinConfig {
         sclk: unsafe { esp_hal::peripherals::GPIO14::steal() },
         mosi: unsafe { esp_hal::peripherals::GPIO13::steal() },
         miso: unsafe { esp_hal::peripherals::GPIO21::steal() },
@@ -1158,7 +1158,7 @@ fn make_radio() -> Result<Lora<'static>, lilygo_t5s3paperpro::lora::Error> {
     // parameter (915 MHz, BW125, CR4/5, preamble 8, private sync word) already
     // agrees; only the spreading factor differed.
     let config = LoraConfig {
-        spreading_factor: lilygo_t5s3paperpro::lora::SpreadingFactor::Sf7,
+        spreading_factor: t5s3_epaper_core::lora::SpreadingFactor::Sf7,
         ..LoraConfig::default()
     };
     Lora::new(pins, spi, &config)
@@ -1283,7 +1283,7 @@ fn draw_screensaver(display: &mut Display, pct: u16) {
 fn show_wallpaper<'d>(
     display: &mut Display,
     spi: esp_hal::peripherals::SPI2<'d>,
-    pins: lilygo_t5s3paperpro::sdcard::PinConfig<'d>,
+    pins: t5s3_epaper_core::sdcard::PinConfig<'d>,
     lora_cs: esp_hal::peripherals::GPIO46<'d>,
 ) -> bool {
     // the SD card shares the SPI bus (sclk/mosi/miso) with the LoRa SX1262
@@ -1378,7 +1378,7 @@ async fn main(_spawner: Spawner) -> ! {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     // a cold boot needs a fresh time sync; a wake from deep sleep keeps the RTC.
-    let woke = lilygo_t5s3paperpro::power::wake_status().woke_from_deep_sleep();
+    let woke = t5s3_epaper_core::power::wake_status().woke_from_deep_sleep();
     let mut clock = Clock::new(peripherals.LPWR);
 
     let mut display = Display::new(

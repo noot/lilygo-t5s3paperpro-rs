@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-extern crate lilygo_t5s3paperpro;
+extern crate t5s3_epaper_core;
 
 use core::{format_args, time::Duration};
 
@@ -13,7 +13,7 @@ use embedded_graphics_core::{
 };
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main, ram};
-use lilygo_t5s3paperpro::{pin_config, power, Display, DrawMode};
+use t5s3_epaper_core::{pin_config, power, Display, DrawMode};
 use u8g2_fonts::FontRenderer;
 
 static FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_mr>();

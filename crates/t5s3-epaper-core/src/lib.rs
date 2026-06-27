@@ -41,7 +41,7 @@
 //!     delay::Delay,
 //!     prelude::*,
 //! };
-//! use lilygo_t5s3paperpro::{pin_config, Display, DrawMode};
+//! use t5s3_epaper_core::{pin_config, Display, DrawMode};
 //!
 //! #[entry]
 //! fn main() -> ! {
@@ -82,7 +82,7 @@
 //! path:
 //!
 //! ```rust no_run
-//! use lilygo_t5s3paperpro::display::Rectangle;
+//! use t5s3_epaper_core::display::Rectangle;
 //!
 //! let area = Rectangle {
 //!     x: 40,
@@ -196,7 +196,7 @@ pub use crate::{
 #[macro_export]
 macro_rules! pin_config {
     ($name:expr) => {{
-        lilygo_t5s3paperpro::PinConfig {
+        t5s3_epaper_core::PinConfig {
             data0: $name.GPIO5,
             data1: $name.GPIO6,
             data2: $name.GPIO7,
@@ -223,7 +223,7 @@ macro_rules! pin_config {
 #[macro_export]
 macro_rules! sdcard_pin_config {
     ($name:expr) => {{
-        lilygo_t5s3paperpro::sdcard::PinConfig {
+        t5s3_epaper_core::sdcard::PinConfig {
             miso: $name.GPIO21,
             mosi: $name.GPIO13,
             sclk: $name.GPIO14,
@@ -237,7 +237,7 @@ macro_rules! sdcard_pin_config {
 #[macro_export]
 macro_rules! gps_pin_config {
     ($name:expr) => {{
-        lilygo_t5s3paperpro::gps::PinConfig {
+        t5s3_epaper_core::gps::PinConfig {
             tx: $name.GPIO43,
             rx: $name.GPIO44,
         }
@@ -249,7 +249,7 @@ macro_rules! gps_pin_config {
 #[macro_export]
 macro_rules! lora_pin_config {
     ($name:expr) => {{
-        lilygo_t5s3paperpro::lora::PinConfig {
+        t5s3_epaper_core::lora::PinConfig {
             sclk: $name.GPIO14,
             mosi: $name.GPIO13,
             miso: $name.GPIO21,
