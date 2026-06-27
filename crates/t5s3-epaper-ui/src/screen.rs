@@ -1,0 +1,32 @@
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Screen {
+    Home,
+    Gps,
+    Lora,
+    Frontlight,
+    Sleep,
+}
+
+impl Screen {
+    pub(crate) fn to_index(self) -> u8 {
+        match self {
+            Screen::Home => 0,
+            Screen::Gps => 1,
+            Screen::Lora => 2,
+            Screen::Frontlight => 3,
+            Screen::Sleep => 4,
+        }
+    }
+
+    // map a stored index back to a screen. the Sleep screen and any
+    // unexpected value fall back to Home, so waking never lands on the sleep
+    // menu or on garbage left by an interrupted persistent write.
+    pub(crate) fn from_index(value: u8) -> Self {
+        match value {
+            1 => Screen::Gps,
+            2 => Screen::Lora,
+            3 => Screen::Frontlight,
+            _ => Screen::Home,
+        }
+    }
+}

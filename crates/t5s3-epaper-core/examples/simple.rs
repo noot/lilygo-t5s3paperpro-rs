@@ -11,8 +11,8 @@ use embedded_graphics::{
 use embedded_graphics_core::pixelcolor::{Gray4, GrayColor};
 use esp_backtrace as _;
 use esp_hal::{delay::Delay, main};
-use t5s3_epaper_core::{pin_config, Display, DrawMode};
 use log::*;
+use t5s3_epaper_core::{pin_config, Display, DrawMode};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

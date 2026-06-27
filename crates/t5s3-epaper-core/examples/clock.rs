@@ -25,8 +25,8 @@ use esp_hal::{
 };
 use esp_println::println;
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
-use t5s3_epaper_core::{display::Rectangle, pin_config, Clock, Display, DrawMode};
 use static_cell::StaticCell;
+use t5s3_epaper_core::{display::Rectangle, pin_config, Clock, Display, DrawMode};
 use u8g2_fonts::{
     fonts,
     types::{FontColor, HorizontalAlignment, VerticalPosition},
