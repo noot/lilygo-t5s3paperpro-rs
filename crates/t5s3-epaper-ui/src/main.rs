@@ -35,6 +35,7 @@ use t5s3_epaper_core::{
     display::DisplayRotation,
     lora::Lora,
     pin_config,
+    sdcard::DirectoryEntry,
     sdcard_pin_config,
     Clock,
     Display,
@@ -56,6 +57,21 @@ use crate::{
     datetime::{status_date, status_time},
     layout::{touch_to_screen, SCREEN_W},
     pages::{
+        files::{
+            display_row_count,
+            draw_file_list,
+            draw_files_footer,
+            draw_files_screen,
+            file_list_native_rect,
+            files_footer_native_rect,
+            files_scroll_down_hit,
+            files_scroll_up_hit,
+            list_hit,
+            load_dir,
+            parent_path,
+            Row,
+            VISIBLE_ROWS,
+        },
         frontlight::{
             brightness_native_rect,
             draw_brightness_area,
@@ -253,6 +269,15 @@ async fn main(_spawner: Spawner) -> ! {
     // ticks since the info page was last refreshed (uptime/temp/voltage).
     let mut info_refresh: u16 = 0;
 
+    // sd-card browser state: the directory being viewed, its (sorted) listing, a
+    // scroll offset into that listing, a footer status/detail line, and a flag
+    // that the listing needs (re)loading from the card on the next pass.
+    let mut files_path = String::from("/");
+    let mut files_entries: Vec<DirectoryEntry> = Vec::new();
+    let mut files_scroll: usize = 0;
+    let mut files_status = String::new();
+    let mut files_dirty = false;
+
     #[cfg(feature = "gps")]
     let mut gps_refresh: u16 = 0;
     // last good position, kept so a dropped fix shows the previous coordinates
@@ -325,6 +350,13 @@ async fn main(_spawner: Spawner) -> ! {
                     let (voltage, temp, uptime, since_sync) = read_info(&mut display, &mut clock);
                     draw_info_screen(&mut display, voltage, temp, uptime, since_sync);
                 }
+                Screen::Files => draw_files_screen(
+                    &mut display,
+                    &files_path,
+                    &files_entries,
+                    files_scroll,
+                    &files_status,
+                ),
             }
             display.flush(DrawMode::BlackOnWhite).expect("to flush");
             needs_redraw = false;
@@ -400,7 +432,15 @@ async fn main(_spawner: Spawner) -> ! {
                     Screen::Home => {
                         if let Some(idx) = hit_test(sx, sy) {
                             current_screen = ICONS[idx].screen;
-                            needs_redraw = true;
+                            // the file browser draws only after its listing is
+                            // loaded (below), so it sets `files_dirty` instead of
+                            // redrawing now with an empty list.
+                            if current_screen == Screen::Files {
+                                files_path = String::from("/");
+                                files_dirty = true;
+                            } else {
+                                needs_redraw = true;
+                            }
                         }
                     }
                     Screen::Frontlight => {
@@ -496,6 +536,59 @@ async fn main(_spawner: Spawner) -> ! {
                             }
                         }
                     }
+                    Screen::Files => {
+                        if back_button_hit(sx, sy) {
+                            current_screen = Screen::Home;
+                            needs_redraw = true;
+                        } else if files_scroll_up_hit(sx, sy) {
+                            if files_scroll > 0 {
+                                files_scroll = files_scroll.saturating_sub(VISIBLE_ROWS);
+                                draw_file_list(
+                                    &mut display,
+                                    &files_path,
+                                    &files_entries,
+                                    files_scroll,
+                                );
+                                display.flush_partial_fast(file_list_native_rect()).ok();
+                            }
+                        } else if files_scroll_down_hit(sx, sy) {
+                            let total = display_row_count(&files_path, files_entries.len());
+                            if files_scroll + VISIBLE_ROWS < total {
+                                files_scroll += VISIBLE_ROWS;
+                                draw_file_list(
+                                    &mut display,
+                                    &files_path,
+                                    &files_entries,
+                                    files_scroll,
+                                );
+                                display.flush_partial_fast(file_list_native_rect()).ok();
+                            }
+                        } else if let Some(row) =
+                            list_hit(sx, sy, &files_path, files_entries.len(), files_scroll)
+                        {
+                            match row {
+                                Row::Parent => {
+                                    files_path = parent_path(&files_path);
+                                    files_dirty = true;
+                                }
+                                Row::Entry(i) => {
+                                    if let Some(entry) = files_entries.get(i) {
+                                        if entry.is_directory {
+                                            files_path = entry.path.clone();
+                                            files_dirty = true;
+                                        } else {
+                                            files_status =
+                                                format!("{} - {} bytes", entry.name, entry.size);
+                                            draw_files_footer(&mut display, &files_status);
+                                            display
+                                                .flush_partial_fast(files_footer_native_rect())
+                                                .ok();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         if back_button_hit(sx, sy) {
                             current_screen = Screen::Home;
@@ -506,6 +599,27 @@ async fn main(_spawner: Spawner) -> ! {
             }
             Some(_) => {}
             None => touch_active = false,
+        }
+
+        // (re)load the directory listing when the browser is opened or navigates
+        // into another folder. mounting the card is self-contained (it steals and
+        // releases SPI2), so this can run any time we're on the Files screen
+        // without conflicting with the radio, which is dropped off-screen.
+        if current_screen == Screen::Files && files_dirty {
+            files_dirty = false;
+            files_scroll = 0;
+            match load_dir(&files_path) {
+                Ok(entries) => {
+                    files_status = format!("{} items", entries.len());
+                    files_entries = entries;
+                }
+                Err(e) => {
+                    esp_println::println!("files: load {files_path} failed: {e:?}");
+                    files_entries = Vec::new();
+                    files_status = String::from("SD read failed");
+                }
+            }
+            needs_redraw = true;
         }
 
         // the radio listens only while the lora screen is open: bring it up in
