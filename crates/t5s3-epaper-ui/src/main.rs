@@ -66,9 +66,11 @@ use crate::{
             files_footer_native_rect,
             files_scroll_down_hit,
             files_scroll_up_hit,
+            is_bmp,
             list_hit,
             load_dir,
             parent_path,
+            view_image,
             Row,
             VISIBLE_ROWS,
         },
@@ -277,6 +279,8 @@ async fn main(_spawner: Spawner) -> ! {
     let mut files_scroll: usize = 0;
     let mut files_status = String::new();
     let mut files_dirty = false;
+    // path of the .bmp currently shown full-screen by the image viewer.
+    let mut image_path = String::new();
 
     #[cfg(feature = "gps")]
     let mut gps_refresh: u16 = 0;
@@ -291,7 +295,10 @@ async fn main(_spawner: Spawner) -> ! {
             let now = status_time(&mut clock);
 
             display.clear().ok();
-            draw_status_bar(&mut display, pct, now);
+            // the image viewer paints full-screen, so it skips the status bar.
+            if current_screen != Screen::Image {
+                draw_status_bar(&mut display, pct, now);
+            }
             match current_screen {
                 Screen::Home => draw_home(&mut display, status_date(&mut clock)),
                 Screen::Gps => {
@@ -357,6 +364,19 @@ async fn main(_spawner: Spawner) -> ! {
                     files_scroll,
                     &files_status,
                 ),
+                Screen::Image => {
+                    if !view_image(&mut display, &image_path) {
+                        Text::with_alignment(
+                            "cannot display image",
+                            Point::new(SCREEN_W / 2, 400),
+                            MonoTextStyle::new(&FONT_9X15, Gray4::BLACK),
+                            Alignment::Center,
+                        )
+                        .draw(&mut display)
+                        .ok();
+                    }
+                    draw_back_button(&mut display);
+                }
             }
             display.flush(DrawMode::BlackOnWhite).expect("to flush");
             needs_redraw = false;
@@ -576,6 +596,10 @@ async fn main(_spawner: Spawner) -> ! {
                                         if entry.is_directory {
                                             files_path = entry.path.clone();
                                             files_dirty = true;
+                                        } else if is_bmp(&entry.name) {
+                                            image_path = entry.path.clone();
+                                            current_screen = Screen::Image;
+                                            needs_redraw = true;
                                         } else {
                                             files_status =
                                                 format!("{} - {} bytes", entry.name, entry.size);
@@ -588,6 +612,11 @@ async fn main(_spawner: Spawner) -> ! {
                                 }
                             }
                         }
+                    }
+                    Screen::Image => {
+                        // any tap dismisses the image and returns to the listing.
+                        current_screen = Screen::Files;
+                        needs_redraw = true;
                     }
                     _ => {
                         if back_button_hit(sx, sy) {

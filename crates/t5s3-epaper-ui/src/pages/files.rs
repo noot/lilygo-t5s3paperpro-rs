@@ -1,6 +1,7 @@
 use alloc::{format, string::String, vec::Vec};
 
 use embedded_graphics::{
+    image::Image,
     mono_font::{
         ascii::{FONT_9X15, FONT_9X18_BOLD},
         MonoTextStyle,
@@ -16,6 +17,7 @@ use t5s3_epaper_core::{
     Display,
     SdCard,
 };
+use tinybmp::Bmp;
 
 use crate::{
     layout::{screen_to_native_rect, SCREEN_W},
@@ -68,6 +70,55 @@ pub(crate) fn load_dir(path: &str) -> Result<Vec<DirectoryEntry>, Error> {
             .then_with(|| a.name.as_str().cmp(b.name.as_str()))
     });
     Ok(entries)
+}
+
+pub(crate) fn is_bmp(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("bmp"))
+}
+
+// read a grayscale .bmp from the card and draw it centered on the screen.
+// mounts the card the same self-contained way as `load_dir`. returns false if
+// the card, file, or bitmap is missing or unreadable so the caller can show a
+// message.
+pub(crate) fn view_image(display: &mut Display, path: &str) -> bool {
+    let _lora_cs = Output::new(
+        unsafe { esp_hal::peripherals::GPIO46::steal() },
+        Level::High,
+        OutputConfig::default(),
+    );
+    let pins = PinConfig {
+        miso: unsafe { esp_hal::peripherals::GPIO21::steal() },
+        mosi: unsafe { esp_hal::peripherals::GPIO13::steal() },
+        sclk: unsafe { esp_hal::peripherals::GPIO14::steal() },
+        cs: unsafe { esp_hal::peripherals::GPIO12::steal() },
+    };
+    let spi = unsafe { esp_hal::peripherals::SPI2::steal() };
+    let card = match SdCard::new(pins, spi) {
+        Ok(card) => card,
+        Err(e) => {
+            esp_println::println!("files: view sd init failed: {e:?}");
+            return false;
+        }
+    };
+    let bytes = match card.read_file(path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            esp_println::println!("files: read {path} failed: {e:?}");
+            return false;
+        }
+    };
+    let Ok(bmp) = Bmp::<Gray4>::from_slice(&bytes) else {
+        esp_println::println!("files: parse {path} failed");
+        return false;
+    };
+    let screen = display.bounding_box().size;
+    let image = bmp.size();
+    let x = (screen.width as i32 - image.width as i32) / 2;
+    let y = (screen.height as i32 - image.height as i32) / 2;
+    Image::new(&bmp, Point::new(x.max(0), y.max(0)))
+        .draw(display)
+        .is_ok()
 }
 
 pub(crate) fn parent_path(path: &str) -> String {

@@ -7,6 +7,7 @@ pub(crate) enum Screen {
     Sleep,
     Info,
     Files,
+    Image,
 }
 
 impl Screen {
@@ -19,6 +20,7 @@ impl Screen {
             Screen::Sleep => 4,
             Screen::Info => 5,
             Screen::Files => 6,
+            Screen::Image => 7,
         }
     }
 
