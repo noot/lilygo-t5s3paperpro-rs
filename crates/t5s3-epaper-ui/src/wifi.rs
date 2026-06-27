@@ -81,6 +81,10 @@ pub(crate) async fn sync_time(wifi: esp_hal::peripherals::WIFI<'static>) -> Opti
 pub(crate) fn set_local_time(clock: &mut Clock, utc_unix: u64, offset_hours: i64) {
     let local = (utc_unix as i64 + offset_hours * 3600).max(0) as u64;
     clock.set_now_us(local * 1_000_000);
+    // record the sync time for the info page's "time since sync".
+    unsafe {
+        crate::LAST_SYNC_UNIX = local;
+    }
     esp_println::println!("clock: set local unix={local} (utc{offset_hours:+})");
 }
 

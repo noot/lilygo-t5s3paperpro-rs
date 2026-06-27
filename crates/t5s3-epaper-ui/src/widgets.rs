@@ -54,27 +54,11 @@ fn draw_battery_icon(display: &mut Display, x: i32, y: i32, pct: u16) {
     }
 }
 
-pub(crate) fn draw_status_bar(
-    display: &mut Display,
-    voltage: f32,
-    pct: u16,
-    temp: i8,
-    time: Option<(u32, u32)>,
-) {
+pub(crate) fn draw_status_bar(display: &mut Display, pct: u16, time: Option<(u32, u32)>) {
     let status_font = MonoTextStyle::new(&FONT_9X15, Gray4::BLACK);
 
-    let v_int = voltage as u32;
-    let v_frac = ((voltage - v_int as f32) * 100.0) as u32;
-    let mut buf = FmtBuf::<48>::new();
-    write!(
-        buf,
-        "{}%  {}.{:02}V  {}C",
-        pct.min(100),
-        v_int,
-        v_frac,
-        temp
-    )
-    .ok();
+    let mut buf = FmtBuf::<8>::new();
+    write!(buf, "{}%", pct.min(100)).ok();
     Text::with_alignment(
         buf.as_str(),
         Point::new(491, 35),

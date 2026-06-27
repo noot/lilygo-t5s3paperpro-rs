@@ -32,7 +32,7 @@ pub(crate) struct Icon {
     pub(crate) screen: Screen,
 }
 
-pub(crate) const ICONS: [Icon; 4] = [
+pub(crate) const ICONS: [Icon; 5] = [
     Icon {
         label: "GPS",
         glyph: "GPS",
@@ -52,6 +52,11 @@ pub(crate) const ICONS: [Icon; 4] = [
         label: "Sleep",
         glyph: "ZZZ",
         screen: Screen::Sleep,
+    },
+    Icon {
+        label: "Info",
+        glyph: "(i)",
+        screen: Screen::Info,
     },
 ];
 
@@ -81,10 +86,6 @@ pub(crate) fn hit_test(sx: i32, sy: i32) -> Option<usize> {
 pub(crate) fn draw_home(display: &mut Display, date: Option<(usize, i64, u32, u32)>) {
     let bold = MonoTextStyle::new(&FONT_9X18_BOLD, Gray4::BLACK);
     let small = MonoTextStyle::new(&FONT_6X10, Gray4::new(4));
-
-    Text::with_alignment("T5 S3 Pro", Point::new(15, 37), bold, Alignment::Left)
-        .draw(display)
-        .ok();
 
     // date header above the icon grid, once the clock has been synced
     if let Some((dow, year, month, day)) = date {

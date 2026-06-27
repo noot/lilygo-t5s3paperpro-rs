@@ -65,6 +65,13 @@ use crate::{
             BRIGHTNESS_STEP,
         },
         home::{draw_home, hit_test, ICONS},
+        info::{
+            draw_info_screen,
+            draw_info_values,
+            info_values_rect,
+            read_info,
+            INFO_REFRESH_TICKS,
+        },
         lora::{
             draw_keyboard,
             draw_list,
@@ -103,6 +110,12 @@ esp_bootloader_esp_idf::esp_app_desc!();
 // deep sleep performs. zeroed (Home) on first boot, then retained across sleep.
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut LAST_SCREEN: u8 = 0;
+
+// local unix time of the last successful NTP sync, also kept in RTC fast memory
+// so "time since sync" on the info page survives deep sleep. zero until the
+// first sync of this power cycle.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+pub(crate) static mut LAST_SYNC_UNIX: u64 = 0;
 
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) -> ! {
@@ -237,6 +250,8 @@ async fn main(_spawner: Spawner) -> ! {
     let mut radio_tried = false;
     let mut kb_symbols = false;
     let mut kb_shift = false;
+    // ticks since the info page was last refreshed (uptime/temp/voltage).
+    let mut info_refresh: u16 = 0;
 
     #[cfg(feature = "gps")]
     let mut gps_refresh: u16 = 0;
@@ -247,13 +262,11 @@ async fn main(_spawner: Spawner) -> ! {
 
     loop {
         if needs_redraw {
-            let voltage = display.battery_voltage().unwrap_or(0.0);
             let pct = display.battery_percentage().unwrap_or(0);
-            let temp = display.panel_temperature().unwrap_or(0);
             let now = status_time(&mut clock);
 
             display.clear().ok();
-            draw_status_bar(&mut display, voltage, pct, temp, now);
+            draw_status_bar(&mut display, pct, now);
             match current_screen {
                 Screen::Home => draw_home(&mut display, status_date(&mut clock)),
                 Screen::Gps => {
@@ -308,10 +321,15 @@ async fn main(_spawner: Spawner) -> ! {
                 ),
                 Screen::Frontlight => draw_frontlight_screen(&mut display, brightness),
                 Screen::Sleep => draw_sleep_screen(&mut display),
+                Screen::Info => {
+                    let (voltage, temp, uptime, since_sync) = read_info(&mut display, &mut clock);
+                    draw_info_screen(&mut display, voltage, temp, uptime, since_sync);
+                }
             }
             display.flush(DrawMode::BlackOnWhite).expect("to flush");
             needs_redraw = false;
             last_status_minute = now.map_or(60, |(_, m)| m);
+            info_refresh = 0;
 
             #[cfg(feature = "gps")]
             {
@@ -327,6 +345,17 @@ async fn main(_spawner: Spawner) -> ! {
                     draw_statusbar_time(&mut display, Some((h, m)));
                     display.flush_partial_fast(statusbar_time_rect()).ok();
                 }
+            }
+        }
+
+        // refresh the info page values periodically so uptime/since-sync tick.
+        if current_screen == Screen::Info && !needs_redraw {
+            info_refresh += 1;
+            if info_refresh >= INFO_REFRESH_TICKS {
+                info_refresh = 0;
+                let (voltage, temp, uptime, since_sync) = read_info(&mut display, &mut clock);
+                draw_info_values(&mut display, voltage, temp, uptime, since_sync);
+                display.flush_partial_fast(info_values_rect()).ok();
             }
         }
 

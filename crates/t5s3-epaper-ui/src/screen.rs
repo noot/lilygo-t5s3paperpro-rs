@@ -5,6 +5,7 @@ pub(crate) enum Screen {
     Lora,
     Frontlight,
     Sleep,
+    Info,
 }
 
 impl Screen {
@@ -15,6 +16,7 @@ impl Screen {
             Screen::Lora => 2,
             Screen::Frontlight => 3,
             Screen::Sleep => 4,
+            Screen::Info => 5,
         }
     }
 
@@ -26,6 +28,7 @@ impl Screen {
             1 => Screen::Gps,
             2 => Screen::Lora,
             3 => Screen::Frontlight,
+            5 => Screen::Info,
             _ => Screen::Home,
         }
     }
