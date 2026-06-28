@@ -58,12 +58,12 @@ pub(crate) const ICONS: [Icon; 6] = [
         screen: Screen::Sleep,
     },
     Icon {
-        label: "Info",
-        screen: Screen::Info,
-    },
-    Icon {
         label: "Files",
         screen: Screen::Files,
+    },
+    Icon {
+        label: "Info",
+        screen: Screen::Info,
     },
 ];
 
@@ -125,7 +125,7 @@ fn draw_glyph(display: &mut Display, screen: Screen, cx: i32, cy: i32) {
         }
         Screen::Lora => {
             // broadcast: a dot with signal arcs radiating upward
-            let base = Point::new(cx, cy + 28);
+            let base = Point::new(cx, cy);
             Circle::with_center(base, 14)
                 .into_styled(fill)
                 .draw(display)
@@ -168,10 +168,6 @@ fn draw_glyph(display: &mut Display, screen: Screen, cx: i32, cy: i32) {
                 .ok();
             Circle::with_center(Point::new(cx + 16, cy - 8), 52)
                 .into_styled(white)
-                .draw(display)
-                .ok();
-            Circle::with_center(Point::new(cx + 22, cy + 22), 8)
-                .into_styled(fill)
                 .draw(display)
                 .ok();
         }
